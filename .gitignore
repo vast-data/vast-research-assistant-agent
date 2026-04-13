@@ -1,0 +1,5 @@
+*.pyc
+*.log
+deployments/k8s-application/secret.yaml
+deployments/k8s-application/configmap.yaml
+.env

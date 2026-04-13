@@ -1,0 +1,293 @@
+<div class="dataflow-page">
+  <div class="page-header">
+    <button class="back-button" routerLink="/chat/new" aria-label="Back to chat">
+      <mat-icon>arrow_back</mat-icon>
+    </button>
+    <mat-icon class="header-icon">animation</mat-icon>
+    <h2>VAST DataEngine - Live Data Flow</h2>
+  </div>
+
+  <div class="page-content">
+    <div class="dataflow-container">
+
+      <!-- ── Phase 1: Ingestion ── -->
+      <div class="phase-label">
+        <mat-icon>download</mat-icon>
+        <span>Ingestion Pipeline</span>
+      </div>
+
+      <div class="flow-track ingestion-track">
+        <!-- Sources -->
+        <div class="flow-node source-node" style="animation-delay: 0s">
+          <div class="node-icon"><mat-icon>cloud</mat-icon></div>
+          <div class="node-label">Confluence</div>
+        </div>
+
+        <div class="flow-node source-node" style="animation-delay: 0.15s">
+          <div class="node-icon"><mat-icon>folder_shared</mat-icon></div>
+          <div class="node-label">Google Drive</div>
+        </div>
+
+        <div class="flow-node source-node" style="animation-delay: 0.3s">
+          <div class="node-icon"><mat-icon>upload_file</mat-icon></div>
+          <div class="node-label">PDF / Docs</div>
+        </div>
+
+        <!-- Animated pipe -->
+        <div class="pipe pipe-right">
+          <div class="pipe-particles">
+            <span class="particle" style="animation-delay: 0s"></span>
+            <span class="particle" style="animation-delay: 0.4s"></span>
+            <span class="particle" style="animation-delay: 0.8s"></span>
+          </div>
+          <div class="pipe-label">sync</div>
+        </div>
+
+        <!-- SyncEngine -->
+        <div class="flow-node engine-node" style="animation-delay: 0.5s">
+          <div class="node-glow"></div>
+          <div class="node-icon"><mat-icon>sync</mat-icon></div>
+          <div class="node-label">VAST SyncEngine</div>
+          <div class="node-detail">Incremental Sync<br/>+ Permissions</div>
+        </div>
+
+        <div class="pipe pipe-right">
+          <div class="pipe-particles">
+            <span class="particle" style="animation-delay: 0.2s"></span>
+            <span class="particle" style="animation-delay: 0.6s"></span>
+            <span class="particle" style="animation-delay: 1.0s"></span>
+          </div>
+          <div class="pipe-label">files + ACL</div>
+        </div>
+
+        <!-- VAST S3 -->
+        <div class="flow-node storage-node" style="animation-delay: 0.8s">
+          <div class="node-glow"></div>
+          <div class="node-icon"><mat-icon>storage</mat-icon></div>
+          <div class="node-label">VAST DataStore S3</div>
+          <div class="node-detail">Object Storage<br/>with Permissions</div>
+        </div>
+
+        <div class="pipe pipe-right">
+          <div class="pipe-particles trigger-particles">
+            <span class="particle" style="animation-delay: 0.1s"></span>
+            <span class="particle" style="animation-delay: 0.5s"></span>
+            <span class="particle" style="animation-delay: 0.9s"></span>
+          </div>
+          <div class="pipe-label">event</div>
+        </div>
+
+        <!-- Event Broker (elevated) -->
+        <div class="flow-node engine-node elevated-node" style="animation-delay: 0.95s">
+          <div class="node-glow"></div>
+          <div class="node-icon"><mat-icon>hub</mat-icon></div>
+          <div class="node-label">VAST Event Broker</div>
+          <div class="node-detail">Event Routing<br/>&amp; Trigger</div>
+        </div>
+
+        <div class="pipe pipe-right">
+          <div class="pipe-particles trigger-particles">
+            <span class="particle" style="animation-delay: 0.2s"></span>
+            <span class="particle" style="animation-delay: 0.6s"></span>
+            <span class="particle" style="animation-delay: 1.0s"></span>
+          </div>
+          <div class="pipe-label">invoke</div>
+        </div>
+
+        <!-- DataEngine -->
+        <div class="flow-node engine-node highlight-node" style="animation-delay: 1.1s">
+          <div class="node-glow active-glow"></div>
+          <div class="node-icon"><mat-icon>settings</mat-icon></div>
+          <div class="node-label">VAST DataEngine</div>
+          <div class="node-detail">Serverless Function</div>
+          <div class="node-steps">
+            <div class="step" style="animation-delay: 1.4s">
+              <mat-icon>content_cut</mat-icon>
+              <span>Chunk</span>
+            </div>
+            <div class="step" style="animation-delay: 1.7s">
+              <mat-icon>transform</mat-icon>
+              <span>Embed</span>
+            </div>
+            <div class="step" style="animation-delay: 2.0s">
+              <mat-icon>save</mat-icon>
+              <span>Write</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="pipe pipe-right">
+          <div class="pipe-particles">
+            <span class="particle" style="animation-delay: 0.3s"></span>
+            <span class="particle" style="animation-delay: 0.7s"></span>
+            <span class="particle" style="animation-delay: 1.1s"></span>
+          </div>
+          <div class="pipe-label">vectors + ACL</div>
+        </div>
+
+        <!-- VastDB -->
+        <div class="flow-node db-node" style="animation-delay: 1.5s">
+          <div class="node-glow db-glow"></div>
+          <div class="node-icon"><mat-icon>grid_view</mat-icon></div>
+          <div class="node-label">VastDB</div>
+          <div class="node-detail">Vector Store<br/>+ Permissions</div>
+        </div>
+
+        <!-- Document Journey (inline at bottom of ingestion track) -->
+        <div class="journey-bar">
+          <div class="journey-step js-1">
+            <div class="doc-shape">
+              <mat-icon>description</mat-icon>
+            </div>
+            <span class="jlabel">Page</span>
+          </div>
+          <div class="journey-arrow"><mat-icon>chevron_right</mat-icon></div>
+          <div class="journey-step js-2">
+            <div class="doc-shape">
+              <mat-icon>description</mat-icon>
+              <div class="lock-badge"><mat-icon>lock</mat-icon></div>
+            </div>
+            <span class="jlabel">+ ACL</span>
+          </div>
+          <div class="journey-arrow"><mat-icon>chevron_right</mat-icon></div>
+          <div class="journey-step js-3">
+            <div class="doc-shape stored">
+              <mat-icon>inventory_2</mat-icon>
+              <div class="lock-badge"><mat-icon>lock</mat-icon></div>
+            </div>
+            <span class="jlabel">S3</span>
+          </div>
+          <div class="journey-arrow"><mat-icon>chevron_right</mat-icon></div>
+          <div class="journey-step js-4">
+            <div class="chunk-group">
+              <div class="chunk"><mat-icon>data_object</mat-icon></div>
+              <div class="chunk"><mat-icon>data_object</mat-icon></div>
+              <div class="chunk"><mat-icon>data_object</mat-icon></div>
+            </div>
+            <span class="jlabel">Chunks</span>
+          </div>
+          <div class="journey-arrow"><mat-icon>chevron_right</mat-icon></div>
+          <div class="journey-step js-5">
+            <div class="row-group">
+              <div class="db-row r1"></div>
+              <div class="db-row r2"></div>
+              <div class="db-row r3"></div>
+            </div>
+            <span class="jlabel">Vectors</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- ── Connector ── -->
+      <div class="phase-connector">
+        <div class="connector-line">
+          <span class="connector-particle" style="animation-delay: 0s"></span>
+          <span class="connector-particle" style="animation-delay: 0.6s"></span>
+          <span class="connector-particle" style="animation-delay: 1.2s"></span>
+        </div>
+        <div class="connector-label">stored & indexed</div>
+      </div>
+
+      <!-- ── Phase 2: Retrieval ── -->
+      <div class="phase-label">
+        <mat-icon>psychology</mat-icon>
+        <span>Agentic RAG Retrieval</span>
+      </div>
+
+      <div class="flow-track retrieval-track">
+        <!-- User Query -->
+        <div class="flow-node query-node" style="animation-delay: 2.0s">
+          <div class="node-icon"><mat-icon>person</mat-icon></div>
+          <div class="node-label">User Query</div>
+          <div class="node-detail">Natural Language</div>
+        </div>
+
+        <div class="pipe pipe-right">
+          <div class="pipe-particles query-particles">
+            <span class="particle" style="animation-delay: 0.15s"></span>
+            <span class="particle" style="animation-delay: 0.55s"></span>
+            <span class="particle" style="animation-delay: 0.95s"></span>
+          </div>
+          <div class="pipe-label">prompt</div>
+        </div>
+
+        <!-- Agent -->
+        <div class="flow-node engine-node highlight-node agent-node" style="animation-delay: 2.3s">
+          <div class="node-glow active-glow"></div>
+          <div class="node-icon"><mat-icon>hub</mat-icon></div>
+          <div class="node-label">Research Agent</div>
+          <div class="node-detail">Multi-Step Reasoning</div>
+          <div class="node-steps">
+            <div class="step" style="animation-delay: 2.6s">
+              <mat-icon>lightbulb</mat-icon>
+              <span>Think</span>
+            </div>
+            <div class="step" style="animation-delay: 2.9s">
+              <mat-icon>search</mat-icon>
+              <span>Search</span>
+            </div>
+            <div class="step" style="animation-delay: 3.2s">
+              <mat-icon>lightbulb</mat-icon>
+              <span>Reason</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="pipe pipe-bidirectional">
+          <div class="pipe-particles">
+            <span class="particle" style="animation-delay: 0s"></span>
+            <span class="particle" style="animation-delay: 0.4s"></span>
+            <span class="particle reverse" style="animation-delay: 0.2s"></span>
+            <span class="particle reverse" style="animation-delay: 0.6s"></span>
+          </div>
+          <div class="pipe-label">tool call</div>
+        </div>
+
+        <!-- InsightEngine -->
+        <div class="flow-node engine-node" style="animation-delay: 2.6s">
+          <div class="node-glow"></div>
+          <div class="node-icon"><mat-icon>insights</mat-icon></div>
+          <div class="node-label">VAST InsightEngine</div>
+          <div class="node-detail">Similarity Search<br/>+ Permission Filter</div>
+        </div>
+
+        <div class="pipe pipe-bidirectional">
+          <div class="pipe-particles">
+            <span class="particle" style="animation-delay: 0.1s"></span>
+            <span class="particle" style="animation-delay: 0.5s"></span>
+            <span class="particle reverse" style="animation-delay: 0.3s"></span>
+            <span class="particle reverse" style="animation-delay: 0.7s"></span>
+          </div>
+          <div class="pipe-label">vectors</div>
+        </div>
+
+        <!-- VastDB (retrieval) -->
+        <div class="flow-node db-node" style="animation-delay: 2.9s">
+          <div class="node-glow db-glow"></div>
+          <div class="node-icon"><mat-icon>grid_view</mat-icon></div>
+          <div class="node-label">VastDB</div>
+          <div class="node-detail">Cosine Search<br/>+ ACL Enforcement</div>
+        </div>
+      </div>
+
+      <!-- ── Output ── -->
+      <div class="phase-connector">
+        <div class="connector-line upward">
+          <span class="connector-particle" style="animation-delay: 0.3s"></span>
+          <span class="connector-particle" style="animation-delay: 0.9s"></span>
+        </div>
+        <div class="connector-label">synthesized answer</div>
+      </div>
+
+      <div class="flow-track output-track">
+        <div class="flow-node result-node" style="animation-delay: 3.2s">
+          <div class="node-glow result-glow"></div>
+          <div class="node-icon"><mat-icon>auto_awesome</mat-icon></div>
+          <div class="node-label">Rich Answer</div>
+          <div class="node-detail">Sources & Citations</div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+</div>
