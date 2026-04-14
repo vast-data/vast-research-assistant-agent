@@ -22,7 +22,6 @@ The system has two main parts:
 | **InsightEngine Pipeline** (Document Ingestion) | [insight-engine-pipeline](deployments/insight-engine-pipeline/README.md) |
 
 
-
 ---
 
 ## Key Features
@@ -56,69 +55,9 @@ The application supports three LLM providers, controlled by the `MODEL_PROVIDER`
 |----------|-------|-------------|
 | **NVIDIA NIM** | `nvidia` (default) | OpenAI-compatible API — local GPU (vLLM/NIM) or NVIDIA cloud |
 | **Google AI Studio** | `gemini` | Google's Gemini API using an API key |
-| **Google Vertex AI** | `vertex` | Google Cloud Vertex AI using service account credentials |
+| **Google Vertex AI** | `vertex` | Google Cloud Vertex AI using a GCP service account |
 
-### NVIDIA NIM (default)
-
-Set in the ConfigMap:
-```
-MODEL_PROVIDER=nvidia
-AGENT_OPENAI_BASE_URL=https://integrate.api.nvidia.com/v1   # or your local NIM endpoint
-AGENT_OPENAI_MODEL_ID=meta/llama-3.3-70b-instruct
-```
-Set `AGENT_OPENAI_API_KEY` in the secrets.
-
-### Google AI Studio (Gemini)
-
-Set in the ConfigMap:
-```
-MODEL_PROVIDER=gemini
-GEMINI_MODEL_ID=gemini-2.5-pro
-```
-Set `GOOGLE_API_KEY` in the secrets.
-
-### Google Vertex AI
-
-**Prerequisites:**
-1. A GCP project with the Vertex AI API enabled
-2. A GCP service account with the `Vertex AI User` role (or equivalent)
-3. A service account JSON key file for that account
-
-**Setup steps:**
-
-1. Create the Kubernetes secret from your service account JSON file:
-   ```bash
-   kubectl -n <namespace> create secret generic vertex-sa-credentials \
-     --from-file=credentials.json=</path/to/your-service-account.json>
-   ```
-
-2. Patch the deployment to mount the credentials:
-   ```bash
-   kubectl -n <namespace> patch deployment research-assistant --type='strategic' -p='{
-     "spec": {
-       "template": {
-         "spec": {
-           "volumes": [{"name": "vertex-sa", "secret": {"secretName": "vertex-sa-credentials"}}],
-           "containers": [{
-             "name": "research-assistant",
-             "env": [{"name": "GOOGLE_APPLICATION_CREDENTIALS", "value": "/etc/vertex/credentials.json"}],
-             "volumeMounts": [{"name": "vertex-sa", "mountPath": "/etc/vertex", "readOnly": true}]
-           }]
-         }
-       }
-     }
-   }'
-   ```
-
-3. Set the ConfigMap values:
-   ```
-   MODEL_PROVIDER=vertex
-   VERTEX_MODEL_ID=gemini-2.5-pro
-   GOOGLE_CLOUD_PROJECT=<your-gcp-project-id>
-   GOOGLE_CLOUD_LOCATION=us-central1
-   ```
-
-> **Note:** The Vertex AI secret and volume mount are only required when using `MODEL_PROVIDER=vertex`. Other providers do not need them.
+For detailed setup instructions per provider (including Vertex AI service account configuration), see the [K8s Application Guide](deployments/k8s-application/README.md).
 
 ---
 
