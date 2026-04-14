@@ -1,4 +1,4 @@
-# VAST DataEngine - Research Assistant Blueprint
+# VAST DataEngine - Research Assistant Blueprint Foundation Stack
 
 An Enterprise RAG-Powered Research Assistant system powered by VAST DataEngine, with flexible LLM provider support (NVIDIA NIM, Google AI Studio, Google Vertex AI).
 
