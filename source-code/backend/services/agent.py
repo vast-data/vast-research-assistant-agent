@@ -83,19 +83,24 @@ def _get_namespace_from_rag_url() -> str:
 
 def _get_session_bucket_and_schema() -> Tuple[str, str]:
     """
-    Derive session bucket and schema from RAG_BASE_URL.
-    Used by VastDBStorage for session persistence.
-    
-    From RAG_BASE_URL like http://backend-webserver.research-assistant:8080:
-    - Extract 'research-assistant'
-    - Add '-bucket' suffix → 'research-assistant-bucket'
-    - Add '-schema' suffix → 'research-assistant-schema'
-    
-    Returns:
-        Tuple of (bucket_name, schema_name)
+    Resolve VastDB bucket/schema for sessions and collection metadata.
+
+    Prefer explicit VASTDB_BUCKET / VASTDB_SCHEMA (needed for local NodePort URLs
+    that do not look like backend-webserver.<namespace>:8080). Otherwise derive
+    from RAG_BASE_URL:
+      http://backend-webserver.research-assistant:8080
+        → research-assistant-bucket / research-assistant-schema
     """
+    bucket = os.getenv("VASTDB_BUCKET")
+    schema = os.getenv("VASTDB_SCHEMA")
+    if bucket and schema:
+        return bucket, schema
+
     namespace = _get_namespace_from_rag_url()
-    return f"{namespace}-bucket", f"{namespace}-schema"
+    return (
+        bucket or f"{namespace}-bucket",
+        schema or f"{namespace}-schema",
+    )
 
 
 def _get_collections_bucket_and_schema() -> Tuple[str, str]:
@@ -113,124 +118,25 @@ def _get_collections_bucket_and_schema() -> Tuple[str, str]:
     return _get_session_bucket_and_schema()  # Same logic
 
 
-def get_collection_metadata(collection_name: str) -> Dict[str, Any]:
+def get_collection_metadata(collection_name: str, token: str) -> Dict[str, Any]:
     """
-    Get collection metadata (num_chunks, num_unique_files, total_doc_size) from VastDB.
-    
-    Chunks are stored in a shared 'chunks' table with a 'collection_name' column.
-    Files are tracked via the VastDB catalog.
-    
-    Args:
-        collection_name: Name of the collection
-    
-    Returns:
-        Dictionary with num_chunks, num_unique_files, total_doc_size_bytes, total_doc_size_mb
+    Get collection metadata via InsightEngine GET /api/v1/collections/{name}.
+    No VastDB fallback — IE is the sole source of truth for these metrics.
     """
-    import os
-    import vastdb
-    from ibis import _
-    
-    try:
-        endpoint = os.getenv("VASTDB_ENDPOINT")
-        access_key = os.getenv("VASTDB_ACCESS_KEY")
-        secret_key = os.getenv("VASTDB_SECRET_KEY")
-        bucket_name, schema_name = _get_collections_bucket_and_schema()
-        
-        if not all([endpoint, access_key, secret_key, bucket_name]):
-            logger.warning("VastDB environment variables not configured for collection metadata")
-            return {"num_chunks": 0, "num_unique_files": 0, "total_doc_size_bytes": 0, "total_doc_size_mb": 0.0}
-        
-        session = vastdb.connect(
-            endpoint=endpoint,
-            access=access_key,
-            secret=secret_key,
-            ssl_verify=False
-        )
-        
-        with session.transaction() as tx:
-            bucket_obj = tx.bucket(bucket_name)
-            is_syncengine = collection_name.startswith("syncengine.")
-            
-            num_chunks = 0
-            try:
-                chunks_table = bucket_obj.schema(schema_name).table("chunks")
-                if chunks_table:
-                    try:
-                        reader = chunks_table.select(["collection_name"])
-                        result = reader.read_all()
-                        df = result.to_pandas()
-                        num_chunks = len(df[df["collection_name"] == collection_name])
-                        logger.info(f"Found {num_chunks} chunks for collection {collection_name} (from {len(df)} total)")
-                    except Exception as select_err:
-                        logger.warning(f"Could not select from chunks table: {select_err}")
-                        stats = chunks_table.stats
-                        if stats and stats.num_rows > 0:
-                            num_chunks = stats.num_rows
-                            logger.info(f"Using total chunks count as fallback: {num_chunks}")
-            except Exception as e:
-                logger.warning(f"Error querying chunks table for {collection_name}: {e}")
-                try:
-                    lookup_schema = schema_name
-                    lookup_table_name = collection_name
-                    if not is_syncengine and '__' in collection_name:
-                        parts = collection_name.split('__', 1)
-                        if len(parts) == 2:
-                            lookup_schema = parts[0]
-                            lookup_table_name = parts[1]
-                    table = bucket_obj.schema(lookup_schema).table(lookup_table_name)
-                    if table:
-                        stats = table.stats
-                        num_chunks = stats.num_rows if stats else 0
-                except Exception:
-                    pass
-            
-            num_unique_files = 0
-            total_doc_size = 0
-            
-            try:
-                cat = tx.catalog()
-                
-                if is_syncengine:
-                    predicate = _.parent_path.startswith(f"/{collection_name}/") & (_.element_type == "FILE")
-                    logger.info(f"Looking for syncengine files at catalog path: /{collection_name}/")
-                else:
-                    s3_bucket = os.getenv("VASTDB_S3_BUCKET", bucket_name)
-                    predicate = _.parent_path.startswith(f"/{s3_bucket}/{collection_name}/") & (_.element_type == "FILE")
-                
-                reader = cat.select(["name", "size", "parent_path", "element_type"], predicate=predicate)
-                result = reader.read_all()
-                df = result.to_pandas()
-                
-                if len(df) > 0:
-                    num_unique_files = len(df)
-                    total_doc_size = int(df["size"].sum())
-                    logger.info(f"Found {num_unique_files} files, {total_doc_size} bytes for collection {collection_name}")
-                else:
-                    logger.info(f"No files found in catalog for collection {collection_name}")
-                    try:
-                        all_reader = cat.select(["parent_path"], predicate=(_.element_type == "FILE"))
-                        all_result = all_reader.read_all()
-                        all_df = all_result.to_pandas()
-                        search_term = collection_name.split(".")[-1] if "." in collection_name else collection_name
-                        matching = all_df[all_df["parent_path"].str.contains(search_term, case=False, na=False)]
-                        if len(matching) > 0:
-                            sample_paths = matching["parent_path"].unique()[:5]
-                            logger.info(f"Debug: Found {len(matching)} files with '{search_term}' in path. Sample paths: {list(sample_paths)}")
-                    except Exception as debug_err:
-                        logger.debug(f"Debug catalog scan failed: {debug_err}")
-                    
-            except Exception as e:
-                logger.warning(f"Catalog query failed for {collection_name}: {e}")
-            
-            return {
-                "num_chunks": num_chunks,
-                "num_unique_files": num_unique_files,
-                "total_doc_size_bytes": total_doc_size,
-                "total_doc_size_mb": round(total_doc_size / (1024 * 1024), 2) if total_doc_size else 0.0
-            }
-    except Exception as e:
-        logger.warning(f"Error getting collection metadata for {collection_name}: {e}")
-        return {"num_chunks": 0, "num_unique_files": 0, "total_doc_size_bytes": 0, "total_doc_size_mb": 0.0}
+    from services.rag import get_collection_from_rag
+
+    coll = get_collection_from_rag(collection_name=collection_name, token=token)
+    num_chunks = int(coll.get("chunk_count") or 0)
+    num_files = int(coll.get("num_files") or 0)
+    total_bytes = int(coll.get("total_size_bytes") or 0)
+    metadata = {
+        "num_chunks": num_chunks,
+        "num_unique_files": num_files,
+        "total_doc_size_bytes": total_bytes,
+        "total_doc_size_mb": round(total_bytes / (1024 * 1024), 2) if total_bytes else 0.0,
+    }
+    logger.info(f"Got collection metadata from IE for {collection_name}: {metadata}")
+    return metadata
 
 
 def create_retrieve_chunks_tool(token: str, base_url: str, target_collection: Optional[str] = None):
@@ -304,7 +210,7 @@ def create_retrieve_chunks_tool(token: str, base_url: str, target_collection: Op
                 result = {"chunks": result}
 
             try:
-                metadata = get_collection_metadata(actual_collection_name)
+                metadata = get_collection_metadata(actual_collection_name, token=token)
                 logger.info(f"Got collection metadata: {metadata}")
                 result["collection_metadata"] = metadata
             except Exception as e:

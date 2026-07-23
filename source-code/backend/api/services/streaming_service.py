@@ -316,7 +316,9 @@ class StreamingService:
                             collection_name = getattr(self, 'collection_name', None)
                             if collection_name:
                                 from services.agent import get_collection_metadata
-                                collection_metadata = get_collection_metadata(collection_name)
+                                collection_metadata = get_collection_metadata(
+                                    collection_name, token=self.token
+                                )
                                 logger.info(f"Got collection metadata from collection_name: {collection_metadata}")
                         except Exception as e:
                             logger.warning(f"Failed to get collection metadata: {e}", exc_info=True)
