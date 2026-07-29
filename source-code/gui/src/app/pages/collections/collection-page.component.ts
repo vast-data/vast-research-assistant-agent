@@ -36,7 +36,7 @@ export class CollectionPageComponent {
 
     dialogRef.afterClosed().subscribe(result => {
       if (result?.success) {
-        this.collectionsService.loadCollections();
+        this.collectionsService.loadCollections(true);
       }
     });
   }

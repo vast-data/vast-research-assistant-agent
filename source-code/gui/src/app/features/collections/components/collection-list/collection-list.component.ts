@@ -70,7 +70,7 @@ export class CollectionListComponent {
               duration: 3000
             });
             // Reload collections after successful deletion
-            this.collectionsService.loadCollections();
+            this.collectionsService.loadCollections(true);
           },
           error: (error) => {
             console.error('Error deleting collection:', error);
@@ -93,7 +93,7 @@ export class CollectionListComponent {
     dialogRef.afterClosed().subscribe((result: any) => {
       if (result?.success) {
         // Reload collections after successful creation
-        this.collectionsService.loadCollections();
+        this.collectionsService.loadCollections(true);
       }
     });
   }
