@@ -18,13 +18,46 @@ from agno.tools.reasoning import ReasoningTools
 from config import (
     AGENT_TEMPERATURE, AGENT_MARKDOWN,
     AGENT_NAME, AGENT_INSTRUCTIONS, RAG_BASE_URL,
-    RAG_SSL_VERIFY, RAG_TIMEOUT,
+    RAG_SSL_VERIFY, RAG_TIMEOUT, RAG_WITH_RERANK,
     AGENT_OPENAI_API_KEY, AGENT_OPENAI_BASE_URL, AGENT_OPENAI_MODEL_ID,
     MODEL_PROVIDER, GOOGLE_API_KEY, GEMINI_MODEL_ID,
     VERTEX_PROJECT_ID, VERTEX_LOCATION, VERTEX_MODEL_ID,
 )
 
 logger = logging.getLogger(__name__)
+
+
+class NIMCompatOpenAIChat(OpenAIChat):
+    """OpenAIChat variant that never emits empty-string message content.
+
+    Why this exists (2026-07-29 Inference Hub migration):
+    NVIDIA NIM endpoints behind `inference-api.nvidia.com` validate each
+    message's `content` as a non-empty constrained string OR a content-part
+    list. Agno's `OpenAIChat._format_message` forces `content = ""` for
+    assistant tool-call turns (it sets content="" when `message.content is
+    None`). With `add_history_to_context=True` + the `retrieve_chunks` tool,
+    every RAG turn produces such an assistant message, which the NIM rejects:
+
+        litellm.BadRequestError: OpenAIException - string_too_short ...
+        ('body','messages',N,'content', ... constrained-str) min_length 1
+
+    OpenAI/NGC's `integrate.api.nvidia.com` tolerated empty content, so this
+    only surfaced after the cutover. Replacing an empty string with a single
+    space satisfies the min_length=1 validator without altering model behavior
+    (a lone space in an assistant tool-call turn is semantically inert).
+
+    Applies to every request path: `_format_message` is the shared formatter
+    used by invoke / invoke_stream (sync + async) in agno 2.3.26.
+    """
+
+    def _format_message(self, message, compress_tool_results: bool = False) -> Dict[str, Any]:
+        message_dict = super()._format_message(
+            message, compress_tool_results=compress_tool_results
+        )
+        if message_dict.get("content") == "":
+            message_dict["content"] = " "
+        return message_dict
+
 
 # Agent cache: store agents per user_id to maintain session state
 _agent_cache: Dict[str, Agent] = {}
@@ -154,7 +187,7 @@ def create_retrieve_chunks_tool(token: str, base_url: str, target_collection: Op
     def retrieve_chunks(
         prompt: str,
         collection_name: str = "",
-        with_rerank: bool = True,
+        with_rerank: bool = RAG_WITH_RERANK,
         number_of_docs: int = 10,
         top_k_from_vectorstore: int = 30
     ) -> Dict[str, Any]:
@@ -164,7 +197,7 @@ def create_retrieve_chunks_tool(token: str, base_url: str, target_collection: Op
         Args:
             prompt: The search query/prompt to find relevant documents (REQUIRED)
             collection_name: Name of the collection to search in (ignored - uses pre-configured collection)
-            with_rerank: Whether to use reranking to improve results (default: True)
+            with_rerank: Ignored unless RAG_WITH_RERANK is set; the deployment decides
             number_of_docs: Number of documents to return after reranking (default: 10)
             top_k_from_vectorstore: Number of documents to retrieve from vector store before reranking (default: 30)
         
@@ -185,10 +218,14 @@ def create_retrieve_chunks_tool(token: str, base_url: str, target_collection: Op
 
             logger.info(f"Calling retrieve_chunks with collection_name='{actual_collection_name}'")
 
+            # The model can hallucinate with_rerank=True from the signature, so the
+            # deployment setting wins: IE 500s when it has no reranker configured.
+            effective_rerank = bool(with_rerank) and RAG_WITH_RERANK
+
             payload: Dict[str, Any] = {
                 "collection_name": actual_collection_name,
                 "prompt": prompt,
-                "with_rerank": with_rerank,
+                "with_rerank": effective_rerank,
                 "number_of_docs": number_of_docs,
                 "top_k_from_vectorstore": top_k_from_vectorstore,
                 "extra_metadata_fields": ["source-url", "source-title"],
@@ -478,7 +515,10 @@ def get_or_create_agent(user_id: str, token: str, session_id: Optional[str] = No
                 }
                 if AGENT_OPENAI_BASE_URL:
                     openai_model_kwargs['base_url'] = AGENT_OPENAI_BASE_URL
-                _shared_model = OpenAIChat(**openai_model_kwargs)
+                # NIMCompatOpenAIChat (not plain OpenAIChat): NVIDIA NIM rejects
+                # empty-string message content that Agno emits for tool-call
+                # turns. See the class docstring for the full rationale.
+                _shared_model = NIMCompatOpenAIChat(**openai_model_kwargs)
                 _shared_model.default_role_map = {
                     "system": "system",
                     "user": "user",
