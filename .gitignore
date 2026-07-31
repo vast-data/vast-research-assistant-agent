@@ -3,3 +3,6 @@
 deployments/k8s-application/secret.yaml
 deployments/k8s-application/configmap.yaml
 .env
+
+.venv/
+source-code/backend/.venv/

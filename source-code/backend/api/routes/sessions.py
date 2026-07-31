@@ -154,11 +154,11 @@ class SessionsRouter:
                                 if hasattr(last_run_raw, "_dict") and isinstance(last_run_raw._dict, dict): last_rd = last_run_raw._dict
                                 elif isinstance(last_run_raw, dict): last_rd = last_run_raw
                                 else: last_rd = {}
-                                run_messages = last_rd.get("messages", [])
-                                run_input = last_rd.get("input", "")
+                                run_messages = last_rd.get("messages") or []
+                                run_input = last_rd.get("input") or ""
                                 if run_input and isinstance(run_input, dict):
                                     run_input = run_input.get("input_content") or run_input.get("input")
-                                last_run_citations = last_rd.get("citations", [])
+                                last_run_citations = last_rd.get("citations") or []
                                 last_run_cm = last_rd.get("collection_metadata")
 
                                 if not run_messages and run_input:
@@ -330,8 +330,8 @@ class SessionsRouter:
             if run_dicts:
                 last_run = run_dicts[-1]
                 last_run_meta = per_run_meta[-1] if per_run_meta else {}
-                run_messages = last_run.get("messages", [])
-                run_input = last_run.get("input", "")
+                run_messages = last_run.get("messages") or []
+                run_input = last_run.get("input") or ""
                 if run_input and isinstance(run_input, dict):
                     run_input = run_input.get("input_content") or run_input.get("input")
 

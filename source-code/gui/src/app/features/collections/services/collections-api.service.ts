@@ -3,15 +3,12 @@ import { HttpClient } from '@angular/common/http';
 import { Observable, of } from 'rxjs';
 import { SETTINGS } from '../../shared/settings';
 import {
-  Collection,
   CollectionsResponse,
-  FullCollection,
-  FullCollectionsResponse,
   CreateCollectionData,
   CreateCollectionResponse,
   DeleteCollectionsResponse
 } from '../../shared/models/collections.model';
-import { MOCK_COLLECTIONS_RESPONSE, MOCK_FULL_COLLECTIONS_RESPONSE, createMockCollection } from '../../shared/mocks';
+import { MOCK_COLLECTIONS_RESPONSE } from '../../shared/mocks';
 
 @Injectable({
   providedIn: 'root'
@@ -25,17 +22,6 @@ export class CollectionsApiService {
     }
 
     return this.httpClient.get<CollectionsResponse>(`${SETTINGS.BASE_API_URL}/collections`);
-  }
-
-  getFullCollections(collectionName?: string): Observable<FullCollectionsResponse> {
-    if (SETTINGS.MOCK_MODE) {
-      return of(MOCK_FULL_COLLECTIONS_RESPONSE);
-    }
-
-    const url = collectionName
-      ? `${SETTINGS.BASE_API_URL}/fullcollections?collection_name=${encodeURIComponent(collectionName)}`
-      : `${SETTINGS.BASE_API_URL}/fullcollections`;
-    return this.httpClient.get<FullCollectionsResponse>(url);
   }
 
   createCollection(data: CreateCollectionData): Observable<CreateCollectionResponse> {

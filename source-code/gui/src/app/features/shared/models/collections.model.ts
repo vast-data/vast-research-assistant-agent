@@ -8,21 +8,8 @@ export interface Collection {
   num_entities: number; // number of documents in the collection
 }
 
-export interface FullCollection {
-  name: string; // collection name
-  num_chunks: number; // number of chunks/rows in VastDB table
-  num_unique_files: number; // number of unique source files
-  total_doc_size_bytes: number; // total size of all documents in bytes
-  total_doc_size_mb: number; // total size in megabytes
-}
-
 export interface CollectionsResponse {
   collections: Collection[];
-}
-
-export interface FullCollectionsResponse {
-  collections: FullCollection[];
-  total: number; // number of collections
 }
 
 export interface CreateCollectionData {

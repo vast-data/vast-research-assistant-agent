@@ -24,13 +24,19 @@ export class SessionsService {
   error = computed(() => this.errorSignal());
 
 
-  loadSessions() {
+  loadSessions(force = false) {
     const token = this.authService.token();
-    console.log('SessionsService.loadSessions() called, token =', token ? 'present' : 'missing');
-    
+    console.log('SessionsService.loadSessions() called, token =', token ? 'present' : 'missing', ', force =', force);
+
     // Don't load if no token is available
     if (!token) {
       console.log('SessionsService: No token available, skipping load');
+      return;
+    }
+
+    // Deduplicate: skip if already in-flight or already loaded (unless forced refresh)
+    if (!force && (this.isLoadingSignal() || this.hasLoadedOnceSignal())) {
+      console.log('SessionsService: Skipping duplicate load');
       return;
     }
 

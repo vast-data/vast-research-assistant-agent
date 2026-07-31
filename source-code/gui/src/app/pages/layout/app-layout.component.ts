@@ -1,4 +1,4 @@
-import { Component, OnInit, inject, effect, computed } from '@angular/core';
+import { Component, OnInit, inject, computed } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { RouterOutlet, ActivatedRoute, Router } from '@angular/router';
 import { TopBarComponent } from './top-bar/top-bar.component';
@@ -35,58 +35,26 @@ export class AppLayoutComponent implements OnInit {
   }
 
   constructor() {
-    // Watch for auth status changes to load data when login completes
-    // This effect runs immediately when component is instantiated
-    effect(() => {
-      const token = this.authService.token();
-      const status = this.authService.status();
-      
-      console.log('AppLayoutComponent effect: token =', token ? 'present' : 'missing', ', status =', status);
-      
-      if (token && status === 'success') {
-        console.log('AppLayoutComponent: Auth status is success, loading data');
-        // Use setTimeout to ensure this runs after navigation completes
-        setTimeout(() => {
-          console.log('AppLayoutComponent: Explicitly calling loadSessions and loadCollections');
-          this.sessionsService.loadSessions();
-          this.collectionsService.loadCollections();
-        }, 100);
-      }
-    });
+    // CollectionsService / SessionsService already load once via their own effects
+    // when auth becomes success. Do not re-trigger here (was causing 3–4x IE calls).
   }
 
   ngOnInit() {
-    // Ensure services are instantiated and load data if token is available
-    const token = this.authService.token();
-    const status = this.authService.status();
-    console.log('AppLayoutComponent ngOnInit: token =', token ? 'present' : 'missing', ', status =', status);
-    
-    if (token && status === 'success') {
-      console.log('AppLayoutComponent: Token available on init, triggering data load immediately');
-      this.sessionsService.loadSessions();
-      this.collectionsService.loadCollections();
-    }
+    // Force-inject services so their constructors/effects run once.
+    void this.sessionsService;
+    void this.collectionsService;
 
     // Check for Azure AD session_id in query params (from redirect)
     this.route.queryParams.subscribe(params => {
       const sessionId = params['session_id'];
       const provider = params['provider'];
-      
+
       if (sessionId && provider === 'azuread') {
-        // Exchange session_id for token
-        // loginWithToken will handle navigation, so we just need to clean URL after a delay
+        // Exchange session_id for token; services' auth effects load data once.
         this.authService.exchangeSessionToken(sessionId).subscribe({
           next: () => {
-            // Token exchange successful, load data immediately
-            console.log('AppLayoutComponent: Token exchange successful, loading data');
             setTimeout(() => {
-              this.sessionsService.loadSessions();
-              this.collectionsService.loadCollections();
-            }, 100);
-            
-            // Wait a bit then clean URL
-            setTimeout(() => {
-              this.router.navigate([], { 
+              this.router.navigate([], {
                 relativeTo: this.route,
                 queryParams: {},
                 replaceUrl: true
@@ -95,7 +63,6 @@ export class AppLayoutComponent implements OnInit {
           },
           error: (err) => {
             console.error('Error in AppLayoutComponent session exchange:', err);
-            // On error, redirect to login
             this.router.navigate(['/login'], { queryParams: { error: 'session_exchange_failed' } });
           }
         });

@@ -60,6 +60,45 @@ def list_collections_from_rag(
         client.close()
 
 
+def get_collection_from_rag(
+    collection_name: str,
+    token: str,
+    base_url: Optional[str] = None
+) -> Dict[str, Any]:
+    """
+    Get a single collection (including metrics) from the RAG/IE backend.
+
+    Uses GET /api/v1/collections/{collection_name}, which returns num_files,
+    chunk_count, total_size_bytes, etc. without a direct VastDB scan.
+    """
+    base_url = (base_url or RAG_BASE_URL).rstrip('/')
+    client = httpx.Client(
+        base_url=base_url,
+        verify=RAG_SSL_VERIFY,
+        timeout=RAG_TIMEOUT
+    )
+
+    try:
+        response = client.get(
+            f"/api/v1/collections/{collection_name}",
+            headers=get_headers(token)
+        )
+        response.raise_for_status()
+        return response.json()
+    except httpx.HTTPStatusError as e:
+        raise HTTPException(
+            status_code=e.response.status_code,
+            detail=f"Failed to get collection: {e.response.text}"
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error getting collection: {str(e)}"
+        )
+    finally:
+        client.close()
+
+
 def create_collection(
     collection_name: str,
     token: str,

@@ -1,4 +1,4 @@
-import { CollectionsResponse, FullCollectionsResponse, Collection, FullCollection, CreateCollectionResponse } from '../models/collections.model';
+import { CollectionsResponse, Collection, CreateCollectionResponse } from '../models/collections.model';
 
 function getCollectionTitle(collectionId: string): string {
   const parts = collectionId.split('__');
@@ -83,26 +83,6 @@ export const MOCK_COLLECTIONS_RESPONSE: CollectionsResponse = {
       num_entities: 0
     }
   ]
-};
-
-export const MOCK_FULL_COLLECTIONS_RESPONSE: FullCollectionsResponse = {
-  collections: [
-    {
-      name: 'yuval6__vast_documents',
-      num_chunks: 1523,
-      num_unique_files: 45,
-      total_doc_size_bytes: 15728640,
-      total_doc_size_mb: 15.0
-    },
-    {
-      name: 'yuval6__test_collection',
-      num_chunks: 234,
-      num_unique_files: 12,
-      total_doc_size_bytes: 5242880,
-      total_doc_size_mb: 5.0
-    }
-  ],
-  total: 2
 };
 
 export function createMockCollection(data: { collection_name: string; tags?: string[] }): Collection {

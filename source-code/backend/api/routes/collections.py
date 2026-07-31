@@ -1,54 +1,20 @@
 """
 Collections routes
 """
-import os
 import logging
-import urllib.request
 from typing import Optional, List
 from fastapi import HTTPException, Depends, UploadFile, File, Form
-
-import vastdb
-
-# Try to import ADBC for native VastDB queries
-try:
-    import adbc_driver_manager
-    import adbc_driver_manager.dbapi
-    ADBC_AVAILABLE = True
-except ImportError:
-    ADBC_AVAILABLE = False
 
 from models import (
     CollectionsResponse, CollectionItem,
     CreateCollectionRequest, CreateCollectionResponse,
-    DeleteCollectionsRequest, DeleteCollectionsResponse,
-    UploadDocumentRequest,
+    DeleteCollectionsResponse,
     ListDocumentsResponse, DocumentItem
 )
 from services.auth import get_token
 from services.rag import list_collections_from_rag, create_collection, delete_collections, upload_document, list_documents
 
 logger = logging.getLogger(__name__)
-
-# VastDB ADBC driver path
-ADBC_DRIVER_PATH = "/tmp/libadbc_driver_vastdb.so"
-ADBC_DRIVER_URL = os.getenv(
-    "VASTDB_ADBC_DRIVER_URL",
-    "https://artifactory.vastdata.com/files/vastdb-native-client/1955131/libadbc_driver_vastdb.so"
-)
-
-
-def ensure_adbc_driver():
-    """Download VastDB ADBC driver if not present"""
-    if not os.path.exists(ADBC_DRIVER_PATH):
-        logger.info(f"Downloading VastDB ADBC driver from {ADBC_DRIVER_URL}")
-        try:
-            urllib.request.urlretrieve(ADBC_DRIVER_URL, ADBC_DRIVER_PATH)
-            os.chmod(ADBC_DRIVER_PATH, 0o755)
-            logger.info(f"VastDB ADBC driver downloaded to {ADBC_DRIVER_PATH}")
-        except Exception as e:
-            logger.error(f"Failed to download ADBC driver: {e}")
-            return False
-    return True
 
 
 class CollectionsRouter:
@@ -99,12 +65,24 @@ class CollectionsRouter:
                         ""
                     )
                     
+                    # IE returns chunk_count/num_files; older APIs used num_entities
+                    raw_entities = (
+                        item.get("num_entities")
+                        if item.get("num_entities") is not None
+                        else item.get("chunk_count")
+                        if item.get("chunk_count") is not None
+                        else item.get("num_files")
+                    )
+                    num_entities = int(raw_entities) if raw_entities is not None else 0
+
                     # Build a descriptive string from available metadata
                     desc_parts = []
                     if item.get("description"):
                         desc_parts.append(item.get("description"))
-                    if item.get("num_entities") is not None:
-                        desc_parts.append(f"{item.get('num_entities')} entities")
+                    if num_entities:
+                        desc_parts.append(f"{num_entities} chunks")
+                    if item.get("num_files") is not None:
+                        desc_parts.append(f"{item.get('num_files')} files")
                     if item.get("source"):
                         desc_parts.append(f"source: {item.get('source')}")
                     if item.get("allowed_users"):
@@ -115,8 +93,6 @@ class CollectionsRouter:
                         f"Collection: {coll_id}" if coll_id else 
                         "No description"
                     )
-                    
-                    num_entities = int(item.get("num_entities", 0)) if item.get("num_entities") is not None else 0
 
                     if coll_id:
                         collection_items.append(CollectionItem(
@@ -242,158 +218,6 @@ class CollectionsRouter:
             raise HTTPException(status_code=500, detail=f"Failed to upload document: {str(e)}")
 
     @staticmethod
-    async def get_full_collections(
-        collection_name: Optional[str] = None,
-        token: str = Depends(get_token)
-    ) -> CollectionsResponse:
-        """
-        Get full collection details with metadata from VastDB.
-        
-        Returns the same structure as GET /collections (id and description),
-        but the description includes metadata: num_chunks, num_unique_files, total_doc_size.
-        
-        Args:
-            collection_name: Optional specific collection to query (defaults to all from RAG)
-            token: JWT token from Authorization header
-        
-        Returns:
-            CollectionsResponse with collections containing metadata in description
-        """
-        try:
-            # Get VastDB connection parameters from environment
-            endpoint = os.getenv("VASTDB_ENDPOINT")
-            access_key = os.getenv("VASTDB_ACCESS_KEY")
-            secret_key = os.getenv("VASTDB_SECRET_KEY")
-            
-            # Derive bucket and schema from RAG_BASE_URL
-            from services.agent import _get_collections_bucket_and_schema
-            bucket_name, schema_name = _get_collections_bucket_and_schema()
-            
-            if not all([endpoint, access_key, secret_key, bucket_name]):
-                raise HTTPException(
-                    status_code=500,
-                    detail="VastDB environment variables not configured"
-                )
-            
-            # Get collections from RAG
-            if collection_name:
-                collections_to_query = [collection_name]
-            else:
-                collections_data = list_collections_from_rag(token=token)
-                if isinstance(collections_data, list):
-                    collections_list = collections_data
-                elif isinstance(collections_data, dict) and "collections" in collections_data:
-                    collections_list = collections_data["collections"]
-                elif isinstance(collections_data, dict) and "items" in collections_data:
-                    collections_list = collections_data["items"]
-                else:
-                    collections_list = []
-                
-                collections_to_query = []
-                for item in collections_list:
-                    if isinstance(item, dict):
-                        coll_name = (
-                            item.get("full_collection_name") or 
-                            item.get("collection_name") or 
-                            item.get("id") or 
-                            ""
-                        )
-                        if coll_name:
-                            collections_to_query.append(coll_name)
-            
-            collection_items: List[CollectionItem] = []
-            session = vastdb.connect(
-                endpoint=endpoint,
-                access=access_key,
-                secret=secret_key,
-                ssl_verify=False
-            )
-            
-            try:
-                with session.transaction() as tx:
-                    bucket_obj = tx.bucket(bucket_name)
-                    
-                    for coll_name in collections_to_query:
-                        try:
-                            is_syncengine = coll_name.startswith("syncengine.")
-                            
-                            # Find table
-                            lookup_schema = schema_name
-                            lookup_table_name = coll_name
-                            
-                            if not is_syncengine and '__' in coll_name:
-                                parts = coll_name.split('__', 1)
-                                if len(parts) == 2:
-                                    lookup_schema = parts[0]
-                                    lookup_table_name = parts[1]
-                            
-                            try:
-                                table = bucket_obj.schema(lookup_schema).table(lookup_table_name)
-                            except Exception:
-                                table = bucket_obj.schema(schema_name).table(coll_name)
-                            
-                            if table is None:
-                                raise Exception(f"Table not found for collection {coll_name}")
-                            
-                            # Get chunk count
-                            stats = table.stats
-                            num_chunks = stats.num_rows if stats else 0
-                            
-                            # Get file count and sizes from catalog
-                            num_unique_files = 0
-                            total_doc_size = 0
-                            
-                            try:
-                                from ibis import _ as ibis_col
-                                cat = tx.catalog()
-                                
-                                if is_syncengine:
-                                    # For syncengine collections: parent_path format is /syncengine.something/
-                                    predicate = ibis_col.parent_path.startswith(f"/{coll_name}/") & (ibis_col.element_type == "FILE")
-                                else:
-                                    # For regular collections: parent_path format is /{bucket_name}/{collection}/
-                                    predicate = ibis_col.parent_path.startswith(f"/{bucket_name}/{coll_name}/") & (ibis_col.element_type == "FILE")
-                                
-                                reader = cat.select(["name", "size", "parent_path", "element_type"], predicate=predicate)
-                                result = reader.read_all()
-                                df = result.to_pandas()
-                                
-                                if len(df) > 0:
-                                    num_unique_files = len(df)
-                                    total_doc_size = int(df["size"].sum())
-                                    
-                            except Exception as e:
-                                logger.warning(f"Catalog query failed for {coll_name}: {e}")
-                            
-                            # Format description with metadata in a structured way
-                            total_doc_size_mb = round(total_doc_size / (1024 * 1024), 2) if total_doc_size else 0.0
-                            description = f"num_chunks={num_chunks}|num_unique_files={num_unique_files}|total_doc_size_bytes={total_doc_size}|total_doc_size_mb={total_doc_size_mb}"
-                            
-                            collection_items.append(CollectionItem(
-                                id=coll_name,
-                                description=description
-                            ))
-                            
-                        except Exception as e:
-                            logger.warning(f"Could not query collection {coll_name}: {e}")
-                            # Return empty metadata for failed collections
-                            description = f"num_chunks=0|num_unique_files=0|total_doc_size_bytes=0|total_doc_size_mb=0.0"
-                            collection_items.append(CollectionItem(
-                                id=coll_name,
-                                description=description
-                            ))
-            finally:
-                pass
-            
-            return CollectionsResponse(collections=collection_items)
-            
-        except HTTPException:
-            raise
-        except Exception as e:
-            logger.error(f"Error getting full collections: {e}", exc_info=True)
-            raise HTTPException(status_code=500, detail=f"Failed to get full collections: {str(e)}")
-    
-    @staticmethod
     async def list_documents_endpoint(
         collection_name: str,
         token: str = Depends(get_token),
@@ -439,4 +263,3 @@ class CollectionsRouter:
         except Exception as e:
             logger.error(f"Error listing documents: {e}", exc_info=True)
             raise HTTPException(status_code=500, detail=f"Failed to list documents: {str(e)}")
-

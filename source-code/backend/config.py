@@ -4,10 +4,28 @@ Loads all configuration from .env file
 """
 
 import os
+from pathlib import Path
 from dotenv import load_dotenv
 
-# Load environment variables from .env file
-load_dotenv()
+# Load environment variables from THIS package's .env, by absolute path.
+#
+# Two hard-won requirements, both from the 2026-07-29 Inference Hub migration:
+#
+#   1. Explicit dotenv_path (not a bare load_dotenv()). A bare call searches
+#      from the current working directory upward, so launching uvicorn from the
+#      repo root (or the gui/ dir) finds NO .env — backend/.env is never read
+#      and every value falls back to the ambient shell environment.
+#   2. override=True. python-dotenv defaults to override=False, so any stale
+#      shell export (e.g. a botched `source .env` that leaked the
+#      "<PASTE INFERENCE HUB sk-... KEY HERE>" placeholder into the shell)
+#      silently shadows the file. That produced
+#      "LiteLLM Virtual Key expected. Received=<PAS****ERE>" even after the real
+#      sk-... key was pasted into .env.
+#
+# Together they guarantee backend/.env is the single source of truth regardless
+# of the working directory uvicorn was started from or what is exported.
+_ENV_PATH = Path(__file__).resolve().parent / ".env"
+load_dotenv(dotenv_path=_ENV_PATH, override=True)
 
 # RAG Backend Configuration
 RAG_BASE_URL = os.getenv("RAG_BASE_URL")
@@ -15,6 +33,10 @@ RAG_USERNAME = os.getenv("RAG_USERNAME", "app-user")
 RAG_PASSWORD = os.getenv("RAG_PASSWORD", "Aa123456!")
 RAG_SSL_VERIFY = os.getenv("RAG_SSL_VERIFY", "false").lower() == "true"
 RAG_TIMEOUT = float(os.getenv("RAG_TIMEOUT", "60.0"))
+# Insight Engine 500s on /api/v1/retrieve when with_rerank=true but no reranker
+# model is configured ("No reranker found with model name None"). Deployments
+# without a reranker NIM must leave this false.
+RAG_WITH_RERANK = os.getenv("RAG_WITH_RERANK", "false").lower() == "true"
 
 # Agent Configuration
 AGENT_TEMPERATURE = float(os.getenv("AGENT_TEMPERATURE", "0"))

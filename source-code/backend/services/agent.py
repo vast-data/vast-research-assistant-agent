@@ -18,13 +18,46 @@ from agno.tools.reasoning import ReasoningTools
 from config import (
     AGENT_TEMPERATURE, AGENT_MARKDOWN,
     AGENT_NAME, AGENT_INSTRUCTIONS, RAG_BASE_URL,
-    RAG_SSL_VERIFY, RAG_TIMEOUT,
+    RAG_SSL_VERIFY, RAG_TIMEOUT, RAG_WITH_RERANK,
     AGENT_OPENAI_API_KEY, AGENT_OPENAI_BASE_URL, AGENT_OPENAI_MODEL_ID,
     MODEL_PROVIDER, GOOGLE_API_KEY, GEMINI_MODEL_ID,
     VERTEX_PROJECT_ID, VERTEX_LOCATION, VERTEX_MODEL_ID,
 )
 
 logger = logging.getLogger(__name__)
+
+
+class NIMCompatOpenAIChat(OpenAIChat):
+    """OpenAIChat variant that never emits empty-string message content.
+
+    Why this exists (2026-07-29 Inference Hub migration):
+    NVIDIA NIM endpoints behind `inference-api.nvidia.com` validate each
+    message's `content` as a non-empty constrained string OR a content-part
+    list. Agno's `OpenAIChat._format_message` forces `content = ""` for
+    assistant tool-call turns (it sets content="" when `message.content is
+    None`). With `add_history_to_context=True` + the `retrieve_chunks` tool,
+    every RAG turn produces such an assistant message, which the NIM rejects:
+
+        litellm.BadRequestError: OpenAIException - string_too_short ...
+        ('body','messages',N,'content', ... constrained-str) min_length 1
+
+    OpenAI/NGC's `integrate.api.nvidia.com` tolerated empty content, so this
+    only surfaced after the cutover. Replacing an empty string with a single
+    space satisfies the min_length=1 validator without altering model behavior
+    (a lone space in an assistant tool-call turn is semantically inert).
+
+    Applies to every request path: `_format_message` is the shared formatter
+    used by invoke / invoke_stream (sync + async) in agno 2.3.26.
+    """
+
+    def _format_message(self, message, compress_tool_results: bool = False) -> Dict[str, Any]:
+        message_dict = super()._format_message(
+            message, compress_tool_results=compress_tool_results
+        )
+        if message_dict.get("content") == "":
+            message_dict["content"] = " "
+        return message_dict
+
 
 # Agent cache: store agents per user_id to maintain session state
 _agent_cache: Dict[str, Agent] = {}
@@ -83,19 +116,24 @@ def _get_namespace_from_rag_url() -> str:
 
 def _get_session_bucket_and_schema() -> Tuple[str, str]:
     """
-    Derive session bucket and schema from RAG_BASE_URL.
-    Used by VastDBStorage for session persistence.
-    
-    From RAG_BASE_URL like http://backend-webserver.research-assistant:8080:
-    - Extract 'research-assistant'
-    - Add '-bucket' suffix → 'research-assistant-bucket'
-    - Add '-schema' suffix → 'research-assistant-schema'
-    
-    Returns:
-        Tuple of (bucket_name, schema_name)
+    Resolve VastDB bucket/schema for sessions and collection metadata.
+
+    Prefer explicit VASTDB_BUCKET / VASTDB_SCHEMA (needed for local NodePort URLs
+    that do not look like backend-webserver.<namespace>:8080). Otherwise derive
+    from RAG_BASE_URL:
+      http://backend-webserver.research-assistant:8080
+        → research-assistant-bucket / research-assistant-schema
     """
+    bucket = os.getenv("VASTDB_BUCKET")
+    schema = os.getenv("VASTDB_SCHEMA")
+    if bucket and schema:
+        return bucket, schema
+
     namespace = _get_namespace_from_rag_url()
-    return f"{namespace}-bucket", f"{namespace}-schema"
+    return (
+        bucket or f"{namespace}-bucket",
+        schema or f"{namespace}-schema",
+    )
 
 
 def _get_collections_bucket_and_schema() -> Tuple[str, str]:
@@ -113,124 +151,25 @@ def _get_collections_bucket_and_schema() -> Tuple[str, str]:
     return _get_session_bucket_and_schema()  # Same logic
 
 
-def get_collection_metadata(collection_name: str) -> Dict[str, Any]:
+def get_collection_metadata(collection_name: str, token: str) -> Dict[str, Any]:
     """
-    Get collection metadata (num_chunks, num_unique_files, total_doc_size) from VastDB.
-    
-    Chunks are stored in a shared 'chunks' table with a 'collection_name' column.
-    Files are tracked via the VastDB catalog.
-    
-    Args:
-        collection_name: Name of the collection
-    
-    Returns:
-        Dictionary with num_chunks, num_unique_files, total_doc_size_bytes, total_doc_size_mb
+    Get collection metadata via InsightEngine GET /api/v1/collections/{name}.
+    No VastDB fallback — IE is the sole source of truth for these metrics.
     """
-    import os
-    import vastdb
-    from ibis import _
-    
-    try:
-        endpoint = os.getenv("VASTDB_ENDPOINT")
-        access_key = os.getenv("VASTDB_ACCESS_KEY")
-        secret_key = os.getenv("VASTDB_SECRET_KEY")
-        bucket_name, schema_name = _get_collections_bucket_and_schema()
-        
-        if not all([endpoint, access_key, secret_key, bucket_name]):
-            logger.warning("VastDB environment variables not configured for collection metadata")
-            return {"num_chunks": 0, "num_unique_files": 0, "total_doc_size_bytes": 0, "total_doc_size_mb": 0.0}
-        
-        session = vastdb.connect(
-            endpoint=endpoint,
-            access=access_key,
-            secret=secret_key,
-            ssl_verify=False
-        )
-        
-        with session.transaction() as tx:
-            bucket_obj = tx.bucket(bucket_name)
-            is_syncengine = collection_name.startswith("syncengine.")
-            
-            num_chunks = 0
-            try:
-                chunks_table = bucket_obj.schema(schema_name).table("chunks")
-                if chunks_table:
-                    try:
-                        reader = chunks_table.select(["collection_name"])
-                        result = reader.read_all()
-                        df = result.to_pandas()
-                        num_chunks = len(df[df["collection_name"] == collection_name])
-                        logger.info(f"Found {num_chunks} chunks for collection {collection_name} (from {len(df)} total)")
-                    except Exception as select_err:
-                        logger.warning(f"Could not select from chunks table: {select_err}")
-                        stats = chunks_table.stats
-                        if stats and stats.num_rows > 0:
-                            num_chunks = stats.num_rows
-                            logger.info(f"Using total chunks count as fallback: {num_chunks}")
-            except Exception as e:
-                logger.warning(f"Error querying chunks table for {collection_name}: {e}")
-                try:
-                    lookup_schema = schema_name
-                    lookup_table_name = collection_name
-                    if not is_syncengine and '__' in collection_name:
-                        parts = collection_name.split('__', 1)
-                        if len(parts) == 2:
-                            lookup_schema = parts[0]
-                            lookup_table_name = parts[1]
-                    table = bucket_obj.schema(lookup_schema).table(lookup_table_name)
-                    if table:
-                        stats = table.stats
-                        num_chunks = stats.num_rows if stats else 0
-                except Exception:
-                    pass
-            
-            num_unique_files = 0
-            total_doc_size = 0
-            
-            try:
-                cat = tx.catalog()
-                
-                if is_syncengine:
-                    predicate = _.parent_path.startswith(f"/{collection_name}/") & (_.element_type == "FILE")
-                    logger.info(f"Looking for syncengine files at catalog path: /{collection_name}/")
-                else:
-                    s3_bucket = os.getenv("VASTDB_S3_BUCKET", bucket_name)
-                    predicate = _.parent_path.startswith(f"/{s3_bucket}/{collection_name}/") & (_.element_type == "FILE")
-                
-                reader = cat.select(["name", "size", "parent_path", "element_type"], predicate=predicate)
-                result = reader.read_all()
-                df = result.to_pandas()
-                
-                if len(df) > 0:
-                    num_unique_files = len(df)
-                    total_doc_size = int(df["size"].sum())
-                    logger.info(f"Found {num_unique_files} files, {total_doc_size} bytes for collection {collection_name}")
-                else:
-                    logger.info(f"No files found in catalog for collection {collection_name}")
-                    try:
-                        all_reader = cat.select(["parent_path"], predicate=(_.element_type == "FILE"))
-                        all_result = all_reader.read_all()
-                        all_df = all_result.to_pandas()
-                        search_term = collection_name.split(".")[-1] if "." in collection_name else collection_name
-                        matching = all_df[all_df["parent_path"].str.contains(search_term, case=False, na=False)]
-                        if len(matching) > 0:
-                            sample_paths = matching["parent_path"].unique()[:5]
-                            logger.info(f"Debug: Found {len(matching)} files with '{search_term}' in path. Sample paths: {list(sample_paths)}")
-                    except Exception as debug_err:
-                        logger.debug(f"Debug catalog scan failed: {debug_err}")
-                    
-            except Exception as e:
-                logger.warning(f"Catalog query failed for {collection_name}: {e}")
-            
-            return {
-                "num_chunks": num_chunks,
-                "num_unique_files": num_unique_files,
-                "total_doc_size_bytes": total_doc_size,
-                "total_doc_size_mb": round(total_doc_size / (1024 * 1024), 2) if total_doc_size else 0.0
-            }
-    except Exception as e:
-        logger.warning(f"Error getting collection metadata for {collection_name}: {e}")
-        return {"num_chunks": 0, "num_unique_files": 0, "total_doc_size_bytes": 0, "total_doc_size_mb": 0.0}
+    from services.rag import get_collection_from_rag
+
+    coll = get_collection_from_rag(collection_name=collection_name, token=token)
+    num_chunks = int(coll.get("chunk_count") or 0)
+    num_files = int(coll.get("num_files") or 0)
+    total_bytes = int(coll.get("total_size_bytes") or 0)
+    metadata = {
+        "num_chunks": num_chunks,
+        "num_unique_files": num_files,
+        "total_doc_size_bytes": total_bytes,
+        "total_doc_size_mb": round(total_bytes / (1024 * 1024), 2) if total_bytes else 0.0,
+    }
+    logger.info(f"Got collection metadata from IE for {collection_name}: {metadata}")
+    return metadata
 
 
 def create_retrieve_chunks_tool(token: str, base_url: str, target_collection: Optional[str] = None):
@@ -248,7 +187,7 @@ def create_retrieve_chunks_tool(token: str, base_url: str, target_collection: Op
     def retrieve_chunks(
         prompt: str,
         collection_name: str = "",
-        with_rerank: bool = True,
+        with_rerank: bool = RAG_WITH_RERANK,
         number_of_docs: int = 10,
         top_k_from_vectorstore: int = 30
     ) -> Dict[str, Any]:
@@ -258,7 +197,7 @@ def create_retrieve_chunks_tool(token: str, base_url: str, target_collection: Op
         Args:
             prompt: The search query/prompt to find relevant documents (REQUIRED)
             collection_name: Name of the collection to search in (ignored - uses pre-configured collection)
-            with_rerank: Whether to use reranking to improve results (default: True)
+            with_rerank: Ignored unless RAG_WITH_RERANK is set; the deployment decides
             number_of_docs: Number of documents to return after reranking (default: 10)
             top_k_from_vectorstore: Number of documents to retrieve from vector store before reranking (default: 30)
         
@@ -279,10 +218,14 @@ def create_retrieve_chunks_tool(token: str, base_url: str, target_collection: Op
 
             logger.info(f"Calling retrieve_chunks with collection_name='{actual_collection_name}'")
 
+            # The model can hallucinate with_rerank=True from the signature, so the
+            # deployment setting wins: IE 500s when it has no reranker configured.
+            effective_rerank = bool(with_rerank) and RAG_WITH_RERANK
+
             payload: Dict[str, Any] = {
                 "collection_name": actual_collection_name,
                 "prompt": prompt,
-                "with_rerank": with_rerank,
+                "with_rerank": effective_rerank,
                 "number_of_docs": number_of_docs,
                 "top_k_from_vectorstore": top_k_from_vectorstore,
                 "extra_metadata_fields": ["source-url", "source-title"],
@@ -304,7 +247,7 @@ def create_retrieve_chunks_tool(token: str, base_url: str, target_collection: Op
                 result = {"chunks": result}
 
             try:
-                metadata = get_collection_metadata(actual_collection_name)
+                metadata = get_collection_metadata(actual_collection_name, token=token)
                 logger.info(f"Got collection metadata: {metadata}")
                 result["collection_metadata"] = metadata
             except Exception as e:
@@ -572,7 +515,10 @@ def get_or_create_agent(user_id: str, token: str, session_id: Optional[str] = No
                 }
                 if AGENT_OPENAI_BASE_URL:
                     openai_model_kwargs['base_url'] = AGENT_OPENAI_BASE_URL
-                _shared_model = OpenAIChat(**openai_model_kwargs)
+                # NIMCompatOpenAIChat (not plain OpenAIChat): NVIDIA NIM rejects
+                # empty-string message content that Agno emits for tool-call
+                # turns. See the class docstring for the full rationale.
+                _shared_model = NIMCompatOpenAIChat(**openai_model_kwargs)
                 _shared_model.default_role_map = {
                     "system": "system",
                     "user": "user",

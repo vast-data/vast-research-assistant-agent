@@ -1,12 +1,12 @@
 <div
   class="dialog-container"
-  [attr.aria-labelledby]="config?.id + '-title'"
-  [attr.aria-describedby]="config?.id + '-content'"
+  [attr.aria-labelledby]="config.id + '-title'"
+  [attr.aria-describedby]="config.id + '-content'"
   [ngStyle]="getAriaAttributes()">
 
   <!-- Backdrop -->
   <div
-    *ngIf="config?.hasBackdrop !== false"
+    *ngIf="config.hasBackdrop !== false"
     class="dialog-backdrop"
     [ngClass]="getBackdropClasses()"
     (click)="onBackdropClick($event)">
@@ -18,15 +18,15 @@
     [ngClass]="getPanelClasses()"
     [ngStyle]="getPanelStyles()"
     role="dialog"
-    [attr.aria-modal]="config?.hasBackdrop !== false"
-    [attr.aria-labelledby]="config?.id + '-title'"
-    [attr.aria-describedby]="config?.id + '-content'">
+    [attr.aria-modal]="config.hasBackdrop !== false"
+    [attr.aria-labelledby]="config.id + '-title'"
+    [attr.aria-describedby]="config.id + '-content'">
 
     <!-- Content Container -->
     <div
       #contentContainer
       class="dialog-content"
-      id="{{config?.id}}-content">
+      id="{{config.id}}-content">
     </div>
   </div>
 </div>

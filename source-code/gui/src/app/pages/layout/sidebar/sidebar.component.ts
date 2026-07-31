@@ -26,8 +26,9 @@ export class SidebarComponent {
 
   constructor() {
     effect(() => {
+      // Refresh sessions when sidebar opens, but skip if already loaded/in-flight
       if (this.sidebarOpen()) {
-        this.sessionsService.loadSessions();
+        this.sessionsService.loadSessions(false);
       }
     });
   }

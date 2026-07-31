@@ -116,21 +116,6 @@ class ToolsResponse(BaseModel):
     tools: List[ToolItem]
 
 
-class FullCollectionItem(BaseModel):
-    """Collection with full metadata from VastDB"""
-    name: str
-    num_chunks: int
-    num_unique_files: int
-    total_doc_size_bytes: int
-    total_doc_size_mb: float
-
-
-class FullCollectionsResponse(BaseModel):
-    """Response with full collection details"""
-    collections: List[FullCollectionItem]
-    total: int
-
-
 class DocumentItem(BaseModel):
     """Document item in list"""
     document_name: str

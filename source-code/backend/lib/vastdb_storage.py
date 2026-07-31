@@ -650,6 +650,11 @@ class VastDBStorage(BaseDb):
         # without None-checking. Strip them to prevent TypeErrors on replay.
         _STRIP_IF_NONE = frozenset({"thought_signature"})
 
+        # Keys whose values Agno copies verbatim into the model provider request
+        # body (see OpenAIChat._format_message). They must stay plain JSON — a
+        # DictAsObject here reaches json.dumps and raises TypeError.
+        _RAW_JSON_KEYS = frozenset({"content", "tool_calls", "tool_args", "provider_data"})
+
         def _sanitize_dict(d):
             """Recursively remove keys that would crash Agno when their value is None."""
             if not isinstance(d, dict):
@@ -685,16 +690,16 @@ class VastDBStorage(BaseDb):
                         if key.startswith('__') and key.endswith('__'):
                             continue
                         if isinstance(value, dict):
-                            # For 'content' fields, keep as dict (Agno needs dict, not wrapper)
-                            if key == 'content':
+                            # Provider-bound fields keep as dict (Agno needs dict, not wrapper)
+                            if key in _RAW_JSON_KEYS:
                                 setattr(self, key, value)
                             else:
                                 setattr(self, key, DictAsObject(value))
                         elif isinstance(value, list):
-                            # For lists, convert items but keep content items as dicts
-                            # CRITICAL: If this is a 'content' list, never wrap items - keep as dicts
-                            if key == 'content':
-                                # Content lists must have items as actual dicts, never wrapped
+                            # For lists, convert items but keep provider-bound items as dicts
+                            # CRITICAL: If this is a provider-bound list, never wrap items
+                            if key in _RAW_JSON_KEYS:
+                                # These lists must have items as actual dicts, never wrapped
                                 # Also ensure nested DictAsObject items are converted to dicts
                                 content_list = []
                                 for item in value:
@@ -703,11 +708,7 @@ class VastDBStorage(BaseDb):
                                     # Convert DictAsObject to dict if needed
                                     if isinstance(item, DictAsObject):
                                         item = item._dict
-                                    # Ensure it's a dict (not a wrapper)
-                                    if isinstance(item, dict):
-                                        content_list.append(item)
-                                    else:
-                                        content_list.append(item)
+                                    content_list.append(item)
                                 setattr(self, key, content_list)
                                 # Also store in _dict as actual dicts
                                 self._dict[key] = content_list
@@ -730,7 +731,7 @@ class VastDBStorage(BaseDb):
                     self.__dict__.update(d.__dict__)
             
             def _unwrap(self, key, value):
-                if key == 'content':
+                if key in _RAW_JSON_KEYS:
                     if isinstance(value, list):
                         return [item._dict if isinstance(item, DictAsObject) else item for item in value]
                     if isinstance(value, DictAsObject):
@@ -816,10 +817,11 @@ class VastDBStorage(BaseDb):
                 return ""
 
             def __getattr__(self, name):
-                # CRITICAL: For 'content' attribute, return actual dict/list, not wrapped
-                # Agno expects message.content to be a list of actual dicts
-                if name == 'content':
-                    value = self._dict.get('content')
+                # CRITICAL: For provider-bound attributes, return actual dict/list, not
+                # wrapped. Agno expects message.content / message.tool_calls to be
+                # plain dicts and forwards them straight into the request body.
+                if name in _RAW_JSON_KEYS:
+                    value = self._dict.get(name)
                     if isinstance(value, list):
                         return [
                             item._dict if isinstance(item, DictAsObject) else item

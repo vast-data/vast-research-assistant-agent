@@ -76,13 +76,19 @@ export class CollectionsService {
     return [];
   });
 
-  loadCollections() {
+  loadCollections(force = false) {
     const token = this.authService.token();
-    console.log('CollectionsService.loadCollections() called, token =', token ? 'present' : 'missing');
-    
+    console.log('CollectionsService.loadCollections() called, token =', token ? 'present' : 'missing', ', force =', force);
+
     // Don't load if no token is available
     if (!token) {
       console.log('CollectionsService: No token available, skipping load');
+      return;
+    }
+
+    // Deduplicate: skip if already in-flight or already loaded (unless forced refresh)
+    if (!force && (this.isLoadingSignal() || this.hasLoadedOnceSignal())) {
+      console.log('CollectionsService: Skipping duplicate load');
       return;
     }
 

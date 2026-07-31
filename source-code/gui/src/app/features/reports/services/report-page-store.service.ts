@@ -385,7 +385,7 @@ export class ReportPageStoreService {
 
     private handleStreamComplete(): void {
         this.responding.set(false);
-        this.sessionsService.loadSessions();
+        this.sessionsService.loadSessions(true);
     }
 
     private getLastMessage(): ChatMessage | undefined {

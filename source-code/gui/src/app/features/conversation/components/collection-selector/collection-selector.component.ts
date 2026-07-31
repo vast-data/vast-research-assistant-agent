@@ -105,7 +105,7 @@ export class CollectionSelectorComponent {
 
     dialogRef.afterClosed().subscribe(result => {
       if (result?.success) {
-        this.collectionsService.loadCollections();
+        this.collectionsService.loadCollections(true);
       }
     });
   }
