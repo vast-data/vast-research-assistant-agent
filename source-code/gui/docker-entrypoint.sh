@@ -1,14 +1,11 @@
 #!/bin/sh
-# Custom entrypoint for nginx to handle cache directory permissions
+# Unprivileged entrypoint: temp/pid dirs under /tmp (writable by any UID).
+set -e
+mkdir -p \
+  /tmp/nginx_proxy \
+  /tmp/nginx_client \
+  /tmp/nginx_fastcgi \
+  /tmp/nginx_uwsgi \
+  /tmp/nginx_scgi
 
-# Create temp directories for nginx cache (using /tmp which is writable)
-mkdir -p /tmp/nginx_proxy
-mkdir -p /tmp/nginx_client
-mkdir -p /tmp/nginx_fastcgi
-mkdir -p /tmp/nginx_uwsgi
-mkdir -p /tmp/nginx_scgi
-mkdir -p /var/run
-
-# Execute the original nginx entrypoint with nginx command
 exec /docker-entrypoint.sh "$@"
-

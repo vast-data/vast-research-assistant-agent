@@ -4,12 +4,12 @@
   [matMenuTriggerFor]="collectionMenu"
   (menuOpened)="onMenuOpened()">
   <span class="selector-button__text">
-    @if (selectedCollection(); as collection) {
-      <mat-icon>{{ collection.private ? 'person' : 'groups' }}</mat-icon> {{ collection.title }}
+    @if (selectionLabel(); as label) {
+      <mat-icon>import_contacts</mat-icon> {{ label }}
     } @else if (isLoading()) {
       Loading...
     } @else {
-      <mat-icon>import_contacts</mat-icon> Choose collection
+      <mat-icon>import_contacts</mat-icon> Choose collections
     }
   </span>
   <mat-icon class="selector-button__icon">expand_more</mat-icon>
@@ -17,6 +17,8 @@
 
 <mat-menu #collectionMenu="matMenu" class="collection-menu">
   <div class="collection-dropdown" tabindex="-1" (click)="$event.stopPropagation()" (keydown)="$event.stopPropagation()">
+    <div class="collection-dropdown__hint">Select one or more collections</div>
+
     <!-- Search field -->
     <div class="collection-dropdown__search">
       <mat-form-field appearance="outline" class="search-field">
@@ -46,10 +48,10 @@
           <button
             class="collection-item"
             type="button"
-            [class.collection-item--selected]="selectedCollection()?.id === collection.id"
+            [class.collection-item--selected]="isSelected(collection)"
             [class.collection-item--disabled]="collection.num_entities === 0"
             [disabled]="collection.num_entities === 0"
-            (click)="onSelectCollection(collection)">
+            (click)="onToggleCollection(collection)">
             <span class="collection-item__header">
               <mat-icon class="collection-item__privacy-icon">{{ collection.private ? 'person' : 'groups' }}</mat-icon>
               <span class="collection-item__name">{{ collection.title }}</span>
@@ -60,7 +62,7 @@
             @if (collection.num_entities === 0) {
               <span class="collection-item__empty-badge">Empty</span>
             }
-            @if (selectedCollection()?.id === collection.id) {
+            @if (isSelected(collection)) {
               <mat-icon class="collection-item__check">check</mat-icon>
             }
           </button>

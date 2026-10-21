@@ -17,7 +17,7 @@ export class AppComponent implements OnInit {
     }
 
     ngOnInit() {
-        this.markdownService.renderer.code = (code, language) => {
+        this.markdownService.renderer.code = (code: string, language?: string) => {
             // language attr is hack to avoid name of lang in copied text
             const langLabel = language ? `<div class="code-language" language="${language}"></div>` : '';
             return `

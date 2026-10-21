@@ -8,7 +8,10 @@ export type StreamEventType =
     | 'bedrock_error' 
     | 'content_delta' 
     | 'complete'
-    | 'session_id';
+    | 'error'
+    | 'session_id'
+    | 'gsf_step'
+    | 'aidr_guard';
 
 export interface ChunkInfo {
     text: string;
@@ -44,6 +47,25 @@ export interface StreamEvent {
     session_id?: string;
     prompt?: string;
     response?: { content: string };
+    // GSF-specific fields
+    sql_code?: string;
+    columns?: string[];
+    gsf_results?: Record<string, unknown>[];
+    gsf_error?: string;
+    gsf_steps?: { node: string; label: string; thought?: string }[];
+    node?: string;
+    label?: string;
+    thought?: string | null;
+    // AIDR guard fields
+    check_type?: 'input' | 'tool_output' | 'output';
+    blocked?: boolean;
+    any_detected?: boolean;
+    policy?: string;
+    detectors?: Record<string, { detected: boolean; data?: any }>;
+    duration_ms?: number;
+    request_id?: string;
+    block_reason?: string | null;
+    context?: string;
 }
 
 export function formatToolResult(event: StreamEvent): string {
@@ -72,4 +94,3 @@ export function formatDuration(seconds: number): string {
     }
     return `${seconds.toFixed(2)}s`;
 }
-

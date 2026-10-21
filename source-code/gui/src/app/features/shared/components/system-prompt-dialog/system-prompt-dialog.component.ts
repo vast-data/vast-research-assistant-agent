@@ -37,7 +37,7 @@ import { SystemPromptService } from '../../services/system-prompt.service';
 
       <div class="prompt-dialog__footer">
         <div class="prompt-dialog__footer-left">
-          <button class="prompt-dialog__reset-btn" (click)="reset()" matTooltip="Restore to default system prompt">
+          <button class="prompt-dialog__reset-btn" (click)="reset()" matTooltip="Restore the built-in prompt for the current mode">
             <mat-icon>restart_alt</mat-icon>
             <span>Restore Default</span>
           </button>
@@ -246,7 +246,7 @@ export class SystemPromptDialogComponent {
 
   reset(): void {
     this.promptService.resetPrompt();
-    this.editingPrompt.set(this.promptService.defaultSystemPrompt());
+    this.editingPrompt.set(this.promptService.builtInPrompt());
   }
 
   close(): void {

@@ -28,7 +28,7 @@ Edit `.env` with your credentials (or use `.env.template` as a starting point):
 
 | Section | Key Settings |
 |---------|--------------|
-| **VastDB** | `VASTDB_ENDPOINT`, `VASTDB_ACCESS_KEY`, `VASTDB_SECRET_KEY` |
+| **VastDB** | `VASTDB_ENDPOINT`, `VASTDB_ACCESS_KEY`, `VASTDB_SECRET_KEY`; optional `VASTDB_BUCKET` / `VASTDB_SCHEMA` (override derived `<ns>-bucket` / `<ns>-schema`) |
 | **RAG** | `RAG_BASE_URL` (InsightEngine backend) |
 | **LLM Provider** | `MODEL_PROVIDER` (`nvidia`, `gemini`, or `vertex`) |
 | **NVIDIA** | `AGENT_OPENAI_API_KEY`, `AGENT_OPENAI_BASE_URL`, `AGENT_OPENAI_MODEL_ID` |

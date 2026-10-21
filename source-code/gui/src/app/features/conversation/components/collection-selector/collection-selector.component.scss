@@ -47,6 +47,12 @@
   max-width: 400px;
   background-color: var(--dialog-main-bg);
 
+  &__hint {
+    padding: 0.35rem 0.75rem 0.5rem;
+    color: var(--dialog-text-muted);
+    font-size: 0.75rem;
+  }
+
   &__search {
     padding: 0 0.5rem 0.5rem;
 

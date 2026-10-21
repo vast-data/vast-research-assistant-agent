@@ -2,11 +2,13 @@ import { Injectable, inject, signal, computed, effect } from '@angular/core';
 import { HttpClient } from '@angular/common/http';
 import { SETTINGS } from '../settings';
 
-const STORAGE_KEY = 'vastrag_prompt_state';
+// v2: v1 persisted built-in mode prompts as if user-edited, which pinned them forever.
+const STORAGE_KEY = 'vastrag_prompt_state_v2';
+
+type PromptMode = 'none' | 'deep' | 'gsf';
 
 interface PromptPersistence {
-  deepResearchEnabled: boolean;
-  customSystemPrompt: string | null;
+  userPrompt: string | null;
 }
 
 @Injectable({ providedIn: 'root' })
@@ -15,46 +17,53 @@ export class SystemPromptService {
 
   defaultSystemPrompt = signal('');
   deepResearchPrompt = signal('');
-  customSystemPrompt = signal('');
-  deepResearchEnabled = signal(false);
+  gsfPrompt = signal('');
+  gsfDeepResearchPrompt = signal('');
   loaded = signal(false);
 
-  hasCustomPrompt = computed(() => this.customSystemPrompt() !== this.defaultSystemPrompt());
+  private researchMode = signal<PromptMode>('none');
+  /** Prompt saved by the user in the System Prompt dialog; null means use the built-in one. */
+  private userPrompt = signal<string | null>(null);
+
+  /** Built-in prompt for the active research mode. */
+  builtInPrompt = computed(() => {
+    switch (this.researchMode()) {
+      case 'gsf':
+        return this.gsfPrompt() || this.defaultSystemPrompt();
+      case 'deep':
+        return this.deepResearchPrompt() || this.defaultSystemPrompt();
+      default:
+        return this.defaultSystemPrompt();
+    }
+  });
+
+  /** Prompt currently in effect (shown and edited in the System Prompt dialog). */
+  customSystemPrompt = computed(() => this.userPrompt() ?? this.builtInPrompt());
+
+  hasCustomPrompt = computed(() => this.userPrompt() !== null);
 
   constructor() {
     effect(() => {
       if (!this.loaded()) return;
-      const state: PromptPersistence = {
-        deepResearchEnabled: this.deepResearchEnabled(),
-        customSystemPrompt: this.customSystemPrompt(),
-      };
+      const state: PromptPersistence = { userPrompt: this.userPrompt() };
       localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
     });
   }
 
   loadSystemPrompt(): void {
     if (this.loaded()) return;
-    this.http.get<{ system_prompt: string; deep_research_prompt?: string }>(`${SETTINGS.BASE_API_URL}/system-prompt`).subscribe({
+    this.http.get<{
+      system_prompt: string;
+      deep_research_prompt?: string;
+      gsf_prompt?: string;
+      gsf_deep_research_prompt?: string;
+    }>(`${SETTINGS.BASE_API_URL}/system-prompt`).subscribe({
       next: (response) => {
         this.defaultSystemPrompt.set(response.system_prompt);
-        if (response.deep_research_prompt) {
-          this.deepResearchPrompt.set(response.deep_research_prompt);
-        }
-
-        const saved = this.loadFromStorage();
-        if (saved) {
-          this.deepResearchEnabled.set(saved.deepResearchEnabled);
-          if (saved.customSystemPrompt) {
-            this.customSystemPrompt.set(saved.customSystemPrompt);
-          } else if (saved.deepResearchEnabled && response.deep_research_prompt) {
-            this.customSystemPrompt.set(response.deep_research_prompt);
-          } else {
-            this.customSystemPrompt.set(response.system_prompt);
-          }
-        } else {
-          this.customSystemPrompt.set(response.system_prompt);
-        }
-
+        this.deepResearchPrompt.set(response.deep_research_prompt ?? '');
+        this.gsfPrompt.set(response.gsf_prompt ?? '');
+        this.gsfDeepResearchPrompt.set(response.gsf_deep_research_prompt ?? '');
+        this.userPrompt.set(this.loadFromStorage()?.userPrompt ?? null);
         this.loaded.set(true);
       },
       error: (err) => console.error('Failed to load system prompt:', err)
@@ -71,32 +80,33 @@ export class SystemPromptService {
     }
   }
 
-  toggleDeepResearch(): void {
-    const enabling = !this.deepResearchEnabled();
-    this.deepResearchEnabled.set(enabling);
-    if (enabling) {
-      this.customSystemPrompt.set(this.deepResearchPrompt());
-    } else {
-      this.customSystemPrompt.set(this.defaultSystemPrompt());
-    }
+  applyResearchMode(mode: 'none' | 'internet' | 'deep' | 'gsf'): void {
+    this.researchMode.set(mode === 'internet' ? 'none' : mode);
   }
 
   savePrompt(prompt: string): void {
-    this.customSystemPrompt.set(prompt);
+    this.userPrompt.set(prompt === this.builtInPrompt() ? null : prompt);
   }
 
   resetPrompt(): void {
-    if (this.deepResearchEnabled()) {
-      this.customSystemPrompt.set(this.deepResearchPrompt());
-    } else {
-      this.customSystemPrompt.set(this.defaultSystemPrompt());
-    }
+    this.userPrompt.set(null);
   }
 
-  getEffectivePrompt(): string | null {
-    if (this.deepResearchEnabled()) {
-      return this.customSystemPrompt();
+  /**
+   * System prompt to send with the next request, or null to let the backend use its default.
+   * A user-saved prompt always wins; otherwise GSF and deep research send their built-in prompt.
+   */
+  getEffectivePrompt(gsfEnabled = false, deepEnabled = false): string | null {
+    const user = this.userPrompt();
+    if (user !== null) {
+      return user || null;
     }
-    return this.hasCustomPrompt() ? this.customSystemPrompt() : null;
+    if (gsfEnabled) {
+      return this.gsfPrompt() || this.defaultSystemPrompt() || null;
+    }
+    if (deepEnabled) {
+      return this.deepResearchPrompt() || null;
+    }
+    return null;
   }
 }

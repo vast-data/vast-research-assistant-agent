@@ -25,13 +25,18 @@
       }
       
       <span class="tool-block__name">{{ displayName }}</span>
+      @if (modelLabel) {
+        <span class="tool-block__model" [title]="modelLabelFull">{{ modelLabel }}</span>
+      }
     </div>
     
     <div class="tool-block__header-right">
       @if (citationsCount > 0) {
         <span class="tool-block__badge">{{ citationsCount }} sources</span>
       }
-      <span class="tool-block__duration">{{ durationText }}</span>
+      @if (!isRagTool && durationText) {
+        <span class="tool-block__duration">{{ durationText }}</span>
+      }
     </div>
   </div>
 
@@ -44,6 +49,16 @@
             Similarity Query
           </div>
           <div class="tool-block__prompt">{{ queryText }}</div>
+        </div>
+      }
+
+      @if (collectionsText) {
+        <div class="tool-block__section">
+          <div class="tool-block__section-title">
+            <mat-icon>import_contacts</mat-icon>
+            Collections
+          </div>
+          <div class="tool-block__metadata-query">{{ collectionsText }}</div>
         </div>
       }
 
@@ -65,14 +80,14 @@
           </div>
           <div class="tool-block__metadata">
             @if (tool.collectionMetadata) {
-              <span>{{ tool.collectionMetadata.num_unique_files }} files</span>
               <span>{{ tool.collectionMetadata.num_chunks }} chunks</span>
-              <span>{{ tool.collectionMetadata.total_doc_size_mb.toFixed(1) }} MB</span>
             }
             @if (citationsCount > 0) {
               <span>{{ citationsCount }} sources</span>
             }
-            <span>{{ durationText }}</span>
+            @if (!isRagTool && durationText) {
+              <span>{{ durationText }}</span>
+            }
           </div>
         </div>
       }

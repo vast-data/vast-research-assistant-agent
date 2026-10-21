@@ -13,7 +13,9 @@ from fastapi import HTTPException
 from models import PromptRequest
 from services.auth import decode_jwt
 from services.agent import get_or_create_agent
+from services.aidr import guard_chat_input, guard_chat_output, guard_tool_output, AidrGuardResult
 from api.utils.session_utils import generate_summary_from_prompt
+from config import GENERATE_SESSION_TITLE_WITH_LLM
 
 logger = logging.getLogger(__name__)
 
@@ -30,6 +32,114 @@ class StreamingService:
         self.collected_citations = []  # Store citations from tool calls
         self.collected_collection_metadata = None  # Store collection_metadata from retrieve_chunks
         self.collected_tool_events = []  # Store tool_start and tool_ended events
+        self.aidr_enabled = False  # Set per-request from PromptRequest.aidr_enabled
+
+    def _emit_aidr_event(self, guard_result: AidrGuardResult, check_type: str, context: str = "") -> None:
+        """Emit an AIDR guard event to the SSE stream."""
+        detectors_info = {}
+        for d in guard_result.detectors:
+            detectors_info[d.name] = {
+                "detected": d.detected,
+                "data": d.data,
+            }
+
+        event = {
+            "type": "aidr_guard",
+            "check_type": check_type,
+            "blocked": guard_result.blocked,
+            "any_detected": guard_result.any_detected,
+            "policy": guard_result.policy,
+            "detectors": detectors_info,
+            "duration_ms": guard_result.duration_ms,
+            "request_id": guard_result.request_id,
+            "block_reason": guard_result.block_reason,
+            "context": context,
+            "timestamp": time.time(),
+        }
+        self.event_queue.put(event)
+        self.collected_tool_events.append({
+            "type": "aidr_guard",
+            "check_type": check_type,
+            "blocked": guard_result.blocked,
+            "any_detected": guard_result.any_detected,
+            "detectors": detectors_info,
+            "duration_ms": guard_result.duration_ms,
+            "block_reason": guard_result.block_reason,
+            "context": context,
+            "timestamp": time.time(),
+        })
+
+    def validate_input(self, prompt: str) -> Optional[str]:
+        """
+        Validate user input against AIDR. Returns block reason if blocked, None otherwise.
+        Emits aidr_guard event to the stream.
+        """
+        if not self.aidr_enabled:
+            return None
+
+        result = guard_chat_input(
+            messages=[{"role": "user", "content": prompt}],
+            user_id=self.user_id,
+        )
+        if result is None:
+            return None
+
+        self._emit_aidr_event(result, check_type="input", context="User prompt")
+
+        if result.blocked:
+            return result.block_reason or "Input blocked by security policy"
+        return None
+
+    def validate_tool_output(self, tool_name: str, tool_output_text: str) -> Optional[str]:
+        """
+        Validate tool output against AIDR. Returns block reason if blocked, None otherwise.
+        Emits aidr_guard event to the stream.
+        """
+        if not self.aidr_enabled:
+            return None
+
+        if not tool_output_text or len(tool_output_text.strip()) == 0:
+            return None
+
+        truncated = tool_output_text[:4000]
+        result = guard_tool_output(
+            tool_name=tool_name,
+            tool_output=truncated,
+            user_id=self.user_id,
+        )
+        if result is None:
+            return None
+
+        self._emit_aidr_event(result, check_type="tool_output", context=f"Tool: {tool_name}")
+
+        if result.blocked:
+            return result.block_reason or f"Tool output from {tool_name} blocked by security policy"
+        return None
+
+    def validate_output(self, response_content: str) -> Optional[str]:
+        """
+        Validate agent final output against AIDR. Returns block reason if blocked, None otherwise.
+        Emits aidr_guard event to the stream.
+        """
+        if not self.aidr_enabled:
+            return None
+
+        if not response_content or len(response_content.strip()) == 0:
+            return None
+
+        truncated = response_content[:4000]
+        result = guard_chat_output(
+            messages=[{"role": "assistant", "content": truncated}],
+            user_id=self.user_id,
+        )
+        if result is None:
+            return None
+
+        self._emit_aidr_event(result, check_type="output", context="Agent response")
+
+        if result.blocked:
+            return result.block_reason or "Output blocked by security policy"
+        return None
     
     @staticmethod
     def _extract_source_title(chunk: dict) -> str | None:
@@ -225,16 +335,67 @@ class StreamingService:
             if source:
                 chunk_info["source"] = str(source)
             
-            # Extract score if available
-            score = chunk.get("score") or chunk.get("similarity") or chunk.get("relevance_score")
-            if score is not None:
-                chunk_info["score"] = float(score)
+            # Extract score if available (IE often returns relevance_score=0 when rerank is off)
+            score = chunk.get("score")
+            if score is None:
+                score = chunk.get("similarity")
+            if score is None:
+                score = chunk.get("relevance_score")
+
+            distance = (
+                chunk.get("distance")
+                or chunk.get("vector_distance")
+                or chunk.get("dist")
+            )
+            if isinstance(chunk.get("metadata"), dict):
+                meta = chunk["metadata"]
+                if distance is None:
+                    distance = meta.get("distance") or meta.get("vector_distance")
+                if score is None:
+                    score = meta.get("score") or meta.get("similarity") or meta.get("relevance_score")
+
+            try:
+                score_f = float(score) if score is not None else None
+            except (TypeError, ValueError):
+                score_f = None
+
+            # When IE leaves relevance_score at 0.0, derive a display score from distance or rank.
+            if (score_f is None or score_f == 0.0) and distance is not None:
+                try:
+                    d = float(distance)
+                    # Lower distance = better match; map to (0, 1]
+                    score_f = 1.0 / (1.0 + max(d, 0.0))
+                except (TypeError, ValueError):
+                    pass
+
+            if score_f is not None:
+                chunk_info["score"] = score_f
+            else:
+                # Placeholder; rank fallback applied after loop
+                chunk_info["score"] = 0.0
             
             if chunk_info:
                 chunks.append(chunk_info)
         
+        # Rank-based fallback when every score is still 0
+        if chunks and all(c.get("score", 0) == 0 for c in chunks):
+            n = len(chunks)
+            for i, c in enumerate(chunks):
+                c["score"] = round((n - i) / n, 4)
+
         return chunks[:10]  # Limit to top 10 chunks
-    
+
+    def emit_gsf_step(self, step: Dict[str, Any]) -> None:
+        """Forward a GSF pipeline step to the client while the query is still running."""
+        self.event_queue.put({
+            "type": "gsf_step",
+            "tool_name": "query_database",
+            "node": step.get("node", ""),
+            "label": step.get("label", ""),
+            "thought": step.get("thought"),
+            "timestamp": time.time(),
+        })
+
     def create_tool_hook(self, timing_metrics: Dict[str, Any]) -> Callable:
         """Create a tool hook that emits SSE events"""
         def tool_hook(function_name: str, function_call: Callable, arguments: Dict[str, Any]):
@@ -247,10 +408,19 @@ class StreamingService:
                 time_to_first_tool = start_time - timing_metrics.get("agent_run_start", time.time())
                 logger.info(f"⏱️  METRICS: Time to first tool: {time_to_first_tool:.2f}s")
             
+            # Enrich retrieve_chunks args so the GUI can show selected collections
+            display_args = dict(arguments) if isinstance(arguments, dict) else {}
+            if function_name == "retrieve_chunks":
+                cols = getattr(self, "collection_names", None) or []
+                if cols:
+                    display_args["collection_names"] = cols
+                elif getattr(self, "collection_name", None):
+                    display_args["collection_names"] = [self.collection_name]
+
             tool_start_event = {
                 "type": "tool_start",
                 "tool_name": function_name,
-                "arguments": arguments,
+                "arguments": display_args,
                 "timestamp": start_time
             }
             self.event_queue.put(tool_start_event)
@@ -269,6 +439,42 @@ class StreamingService:
                 
                 citations = self.extract_citations(function_name, result)
                 chunks = self.extract_chunks(function_name, result)
+
+                # AIDR: Validate tool output
+                tool_output_text = ""
+                if isinstance(result, dict):
+                    raw_chunks = result.get("chunks", [])
+                    if raw_chunks:
+                        tool_output_text = " ".join(
+                            c.get("text", "") or c.get("content", "") or ""
+                            for c in raw_chunks[:5]
+                            if isinstance(c, dict)
+                        )[:4000]
+                    elif "error" not in result:
+                        tool_output_text = json.dumps(result, default=str)[:4000]
+                elif isinstance(result, list):
+                    tool_output_text = " ".join(
+                        (item.get("text", "") if isinstance(item, dict) else str(item))
+                        for item in result[:5]
+                    )[:4000]
+                elif isinstance(result, str):
+                    tool_output_text = result[:4000]
+
+                aidr_block_reason = self.validate_tool_output(function_name, tool_output_text)
+                if aidr_block_reason:
+                    logger.warning(f"AIDR blocked tool output from {function_name}: {aidr_block_reason}")
+                    end_time = time.time()
+                    tool_complete_event = {
+                        "type": "tool_complete",
+                        "tool_name": function_name,
+                        "success": False,
+                        "result": f"⚠️ Blocked by security policy: {aidr_block_reason}",
+                        "duration": end_time - start_time,
+                        "timestamp": end_time,
+                    }
+                    self.event_queue.put(tool_complete_event)
+                    self.collected_tool_events.append(tool_complete_event)
+                    return f"Security check failed: {aidr_block_reason}. Do not retry this tool. Inform the user that the content was blocked by security policy."
                 
                 # Collect citations for saving to the run
                 if citations:
@@ -306,8 +512,8 @@ class StreamingService:
                 if chunks:
                     tool_complete_event["chunks"] = chunks
                 
+                collection_metadata = None
                 if function_name == "retrieve_chunks":
-                    collection_metadata = None
                     if isinstance(result, dict):
                         collection_metadata = result.get("collection_metadata")
                     
@@ -324,6 +530,18 @@ class StreamingService:
                     if collection_metadata:
                         tool_complete_event["collection_metadata"] = collection_metadata
                         self.collected_collection_metadata = collection_metadata
+
+                if function_name == "query_database" and isinstance(result, dict):
+                    if result.get("sql_code"):
+                        tool_complete_event["sql_code"] = result["sql_code"]
+                    if result.get("columns"):
+                        tool_complete_event["columns"] = result["columns"]
+                    if result.get("results"):
+                        tool_complete_event["gsf_results"] = result["results"][:50]
+                    if result.get("error"):
+                        tool_complete_event["gsf_error"] = result["error"]
+                    if result.get("steps"):
+                        tool_complete_event["gsf_steps"] = result["steps"]
                 
                 self.event_queue.put(tool_complete_event)
                 
@@ -342,6 +560,17 @@ class StreamingService:
                     tool_ended_event["chunks"] = chunks
                 if function_name == "retrieve_chunks" and collection_metadata:
                     tool_ended_event["collection_metadata"] = collection_metadata
+                if function_name == "query_database" and isinstance(result, dict):
+                    if result.get("sql_code"):
+                        tool_ended_event["sql_code"] = result["sql_code"]
+                    if result.get("columns"):
+                        tool_ended_event["columns"] = result["columns"]
+                    if result.get("results"):
+                        tool_ended_event["gsf_results"] = result["results"][:50]
+                    if result.get("error"):
+                        tool_ended_event["gsf_error"] = result["error"]
+                    if result.get("steps"):
+                        tool_ended_event["gsf_steps"] = result["steps"]
                 
                 self.collected_tool_events.append(tool_ended_event)
                 
@@ -419,6 +648,19 @@ class StreamingService:
         Returns:
             Tuple of (run_result, session_id, response_content)
         """
+        self.aidr_enabled = bool(request.aidr_enabled)
+        if request.gsf_enabled:
+            from config import GSF_BASE_URL
+            if not GSF_BASE_URL:
+                logger.error("Client requested gsf_enabled=true but GSF_BASE_URL is unset")
+                self.event_queue.put({
+                    "type": "content_delta",
+                    "delta": (
+                        "\n\n⚠️ **NVIDIA Auto-Ontology is toggled on but `GSF_BASE_URL` is not configured** "
+                        "on the backend. Set it in the ConfigMap (e.g. `http://gsf-host:3001`) "
+                        "and restart — otherwise only RAG (`retrieve_chunks`) is available.\n\n"
+                    ),
+                })
         request_start_time = time.time()
         self.timing_metrics = {
             "request_received": request_start_time,
@@ -457,13 +699,19 @@ class StreamingService:
                 target_session_id = None
         
         self.timing_metrics["agent_creation_start"] = time.time()
-        # Get collection name from request (use first collection if list provided)
-        collection_name = None
+        collection_names = None
         if request.collections:
-            collection_name = request.collections[0] if isinstance(request.collections, list) else request.collections
-        # Store collection_name as instance variable for use in tool_hook
+            if isinstance(request.collections, list):
+                collection_names = [c for c in request.collections if c]
+            else:
+                collection_names = [request.collections]
+        collection_name = collection_names[0] if collection_names else None
         self.collection_name = collection_name
-        logger.info(f"Streaming request collections={request.collections}, resolved collection_name={collection_name}")
+        self.collection_names = collection_names or []
+        logger.info(
+            f"Streaming request collections={request.collections}, "
+            f"resolved collection_names={self.collection_names}"
+        )
         
         agent = get_or_create_agent(
             user_id=self.user_id,
@@ -471,8 +719,11 @@ class StreamingService:
             session_id=target_session_id,
             allowed_tools=request.tools,
             collection_name=collection_name,
+            collection_names=collection_names,
             internet_search=request.internet_search,
-            custom_instructions=request.system_prompt
+            custom_instructions=request.system_prompt,
+            gsf_step_callback=self.emit_gsf_step,
+            gsf_enabled=bool(request.gsf_enabled),
         )
         self.timing_metrics["agent_creation_end"] = time.time()
         
@@ -719,6 +970,16 @@ class StreamingService:
             "type": "start",
             "message": "Processing prompt..."
         })
+
+        # AIDR: Validate user input before running the agent
+        input_block_reason = self.validate_input(request.prompt)
+        if input_block_reason:
+            logger.warning(f"AIDR blocked input from user {self.user_id}: {input_block_reason}")
+            self.event_queue.put({
+                "type": "error",
+                "error": f"Your message was blocked by security policy: {input_block_reason}"
+            })
+            return
         
         import traceback as _tb
         # Monkey-patch Agno's log_error to include traceback
@@ -737,9 +998,23 @@ class StreamingService:
             logger.warning(f"Could not patch agno log_error: {patch_err}")
         
         try:
-            # Use streaming mode with retry on model overload (503)
+            # Use streaming mode with retry on model overload (503) and Foundry rate limits (429)
             max_retries = 3
-            retry_delays = [5, 10, 20]
+            retry_delays = [20, 40, 60]
+
+            def _is_retryable_model_error(err_str: str) -> bool:
+                s = err_str.lower()
+                return (
+                    '503' in err_str
+                    or 'unavailable' in s
+                    or 'high demand' in s
+                    or 'overloaded' in s
+                    or '429' in err_str
+                    or 'rate limit' in s
+                    or 'rate_limit' in s
+                    or 'too_many_requests' in s
+                )
+
             run_iterator = None
 
             for attempt in range(max_retries):
@@ -748,10 +1023,9 @@ class StreamingService:
                     break
                 except Exception as run_err:
                     err_str = str(run_err)
-                    is_overload = '503' in err_str or 'UNAVAILABLE' in err_str or 'high demand' in err_str.lower() or 'overloaded' in err_str.lower()
-                    if is_overload and attempt < max_retries - 1:
+                    if _is_retryable_model_error(err_str) and attempt < max_retries - 1:
                         delay = retry_delays[attempt]
-                        logger.warning(f"⚠️ Model overloaded (attempt {attempt + 1}/{max_retries}), retrying in {delay}s...")
+                        logger.warning(f"⚠️ Model overloaded/rate-limited (attempt {attempt + 1}/{max_retries}), retrying in {delay}s...")
                         self.event_queue.put({
                             "type": "content_delta",
                             "delta": f"\n\n⏳ *The AI model is experiencing high demand. Retrying in {delay} seconds (attempt {attempt + 2}/{max_retries})...*\n\n"
@@ -835,8 +1109,11 @@ class StreamingService:
             
             logger.info(f"🔄 Stream loop finished after {event_count} events, accumulated {len(accumulated_content)} chars")
             
-            # Detect 503/overload errors embedded in streamed content
-            _overload_markers = ['"code": 503', '"status": "UNAVAILABLE"', 'high demand', 'model is overloaded']
+            # Detect 503/overload / 429 rate-limit errors embedded in streamed content
+            _overload_markers = [
+                '"code": 503', '"status": "UNAVAILABLE"', 'high demand', 'model is overloaded',
+                '"code": 429', 'rate limit', 'rate_limit', 'too_many_requests', 'Too Many Requests',
+            ]
             if any(m in accumulated_content for m in _overload_markers):
                 logger.warning(f"⚠️ Detected model overload error in streamed content ({len(accumulated_content)} chars)")
                 # Strip the error JSON from the visible output
@@ -972,10 +1249,10 @@ class StreamingService:
                             session_summary_text = None
                             if provided_session_name:
                                 session_title = provided_session_name
-                            else:
+                            elif GENERATE_SESSION_TITLE_WITH_LLM:
                                 logger.info(f"Generating title from first prompt: {request.prompt[:50]}...")
                                 session_summary_text = generate_summary_from_prompt(agent, request.prompt)
-                                _err_markers = ['"code": 503', 'UNAVAILABLE', 'high demand']
+                                _err_markers = ['"code": 503', 'UNAVAILABLE', 'high demand', '429', 'rate limit']
                                 if session_summary_text and any(m in session_summary_text for m in _err_markers):
                                     logger.warning("⚠️ Title generation returned error content, using prompt as fallback")
                                     session_summary_text = None
@@ -984,6 +1261,10 @@ class StreamingService:
                                 else:
                                     session_title = request.prompt[:57] + "..." if len(request.prompt) > 60 else request.prompt
                                 logger.info(f"Generated title: {session_title}")
+                            else:
+                                # Default for Foundry: avoid an extra LLM call that burns RPM
+                                session_title = request.prompt[:57] + "..." if len(request.prompt) > 60 else request.prompt
+                                logger.info(f"Using truncated prompt as title (GENERATE_SESSION_TITLE_WITH_LLM=false): {session_title}")
 
                             if not hasattr(reloaded_session, 'summary') or not reloaded_session.summary:
                                 reloaded_session.summary = {}
@@ -1184,13 +1465,33 @@ class StreamingService:
             
             self.timing_metrics["total_time"] = time.time() - request_start_time
             logger.info(f"⏱️  METRICS: Total request time: {self.timing_metrics['total_time']:.2f}s")
+
+            # AIDR: Validate agent output before returning to user
+            output_block_reason = self.validate_output(response_content)
+            if output_block_reason:
+                logger.warning(f"AIDR blocked output for user {self.user_id}: {output_block_reason}")
+                response_content = f"⚠️ **Response blocked by security policy:** {output_block_reason}"
+                self.event_queue.put({
+                    "type": "content_delta",
+                    "delta": f"\n\n{response_content}"
+                })
             
             return run_result, current_session_id, response_content
         except Exception as e:
             err_str = str(e)
-            is_overload = '503' in err_str or 'UNAVAILABLE' in err_str or 'high demand' in err_str.lower() or 'overloaded' in err_str.lower()
+            s = err_str.lower()
+            is_overload = (
+                '503' in err_str
+                or 'unavailable' in s
+                or 'high demand' in s
+                or 'overloaded' in s
+                or '429' in err_str
+                or 'rate limit' in s
+                or 'rate_limit' in s
+                or 'too_many_requests' in s
+            )
             if is_overload:
-                logger.warning(f"⚠️ Model overloaded during streaming: {e}")
+                logger.warning(f"⚠️ Model overloaded/rate-limited during streaming: {e}")
                 self.event_queue.put({
                     "type": "content_delta",
                     "delta": "\n\n⚠️ **The AI model is currently experiencing high demand.** Please try again in a few moments.\n"
@@ -1221,9 +1522,15 @@ class StreamingService:
             """Run agent in executor and handle completion"""
             nonlocal agent_completed, agent_error
             try:
-                run_result, session_id, response_content = await loop.run_in_executor(
+                result = await loop.run_in_executor(
                     None, self.run_agent, request
                 )
+
+                if result is None:
+                    agent_completed = True
+                    return
+
+                run_result, session_id, response_content = result
                 
                 # Send complete event
                 final_event = {

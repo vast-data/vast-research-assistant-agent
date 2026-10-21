@@ -37,12 +37,17 @@ export class CollectionsService {
     const response = this.collectionsResponseSignal();
     if (!response?.collections) return [];
 
-    return response.collections.map((collection): Collection => ({
-      ...collection,
-      title: this.getCollectionTitle(collection.id),
-      private: this.isCollectionPrivate(collection.id),
-      num_entities: (collection as any).num_entities ?? 0
-    }));
+    return response.collections.map((collection): Collection => {
+      const numFiles = (collection as any).num_files ?? (collection as any).num_entities ?? 0;
+      return {
+        ...collection,
+        title: this.getCollectionTitle(collection.id),
+        private: this.isCollectionPrivate(collection.id),
+        num_entities: numFiles,
+        num_files: numFiles,
+        num_chunks: (collection as any).num_chunks ?? 0,
+      };
+    });
   });
   isLoading = computed(() => this.isLoadingSignal() && !this.hasLoadedOnceSignal());
   error = computed(() => this.errorSignal());

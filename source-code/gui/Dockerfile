@@ -3,44 +3,41 @@
 ARG SOURCE_REGISTRY=""
 FROM ${SOURCE_REGISTRY}docker.io/library/node:20-alpine AS build
 
-# Set working directory
 WORKDIR /app
 
-# Copy package.json and package-lock.json
 COPY package*.json ./
-
-# Install dependencies
 RUN npm install --legacy-peer-deps
 
-# Copy the entire project
 COPY . .
 
-# Build the application for production
-# Set BASE_API_URL environment variable for production build
 ENV BASE_API_URL=http://research-assistant:8000
 RUN npm run generate-prod-env
 RUN npm run build-prod
 
-# Stage 2: Serve the application using nginx
+# Stage 2: Unprivileged nginx (PSS / random non-root UID)
 FROM ${SOURCE_REGISTRY}docker.io/library/nginx:1.27.5-alpine
 
-# Remove default nginx website
 RUN rm -rf /usr/share/nginx/html/*
 
-# Copy built application from the build stage
-# build-prod uses --output-path /gui_dist
 COPY --from=build /gui_dist /usr/share/nginx/html
 
-# Copy custom nginx configuration
+# Main config: no `user` directive, pid/temp under /tmp
+COPY nginx-main.conf /etc/nginx/nginx.conf
 COPY nginx.conf /etc/nginx/conf.d/default.conf
 
-# Copy custom entrypoint script
 COPY docker-entrypoint.sh /custom-entrypoint.sh
-RUN chmod +x /custom-entrypoint.sh
+RUN chmod +x /custom-entrypoint.sh \
+    && mkdir -p /tmp/nginx_proxy /tmp/nginx_client /tmp/nginx_fastcgi /tmp/nginx_uwsgi /tmp/nginx_scgi \
+    && chmod -R 777 /tmp \
+    # Ensure stock "user nginx;" never comes back if base image layers change
+    && grep -q 'pid /tmp/nginx.pid' /etc/nginx/nginx.conf \
+    && ! grep -qE '^\s*user\s+' /etc/nginx/nginx.conf
 
-# Expose port 80
-EXPOSE 80
+# Numeric UID so PSS runAsNonRoot can verify; nginx must NOT run as root
+# (as root it tries chown temp dirs to 101 and fails when CAP_CHOWN is dropped).
+USER 101
 
-# Use custom entrypoint (override nginx's entrypoint)
+EXPOSE 8080
+
 ENTRYPOINT ["/custom-entrypoint.sh"]
 CMD ["nginx", "-g", "daemon off;"]

@@ -16,7 +16,9 @@ from fastapi import FastAPI
 
 from config import (
     API_TITLE, API_DESCRIPTION, API_VERSION, AGENT_INSTRUCTIONS, AGENT_DEEP_RESEARCH_INSTRUCTIONS,
+    GSF_INSTRUCTIONS, GSF_DEEP_RESEARCH_INSTRUCTIONS,
     MODEL_PROVIDER, AGENT_OPENAI_MODEL_ID, GEMINI_MODEL_ID, VERTEX_MODEL_ID,
+    MODEL_PROVIDER_DISPLAY, IE_EMBEDDING_MODEL,
 )
 from api.routes.auth import AuthRouter
 from api.routes.tools import ToolsRouter
@@ -60,18 +62,27 @@ async def get_system_prompt():
     return {
         "system_prompt": AGENT_INSTRUCTIONS,
         "deep_research_prompt": AGENT_DEEP_RESEARCH_INSTRUCTIONS,
+        "gsf_prompt": GSF_INSTRUCTIONS,
+        "gsf_deep_research_prompt": GSF_DEEP_RESEARCH_INSTRUCTIONS,
     }
+
+_PROVIDER_LABELS = {"nvidia": "NVIDIA", "gemini": "Gemini", "vertex": "Vertex AI"}
 
 @app.get("/api/v1/model-info")
 async def get_model_info():
-    """Get current model provider and model ID"""
+    """Get current model provider and model ID.
+
+    MODEL_PROVIDER is the routing key (e.g. nvidia → OpenAIChat).
+    MODEL_PROVIDER_DISPLAY overrides the GUI badge (e.g. Microsoft Foundry).
+    """
     if MODEL_PROVIDER == "gemini":
         model_id = GEMINI_MODEL_ID
     elif MODEL_PROVIDER == "vertex":
         model_id = VERTEX_MODEL_ID
     else:
         model_id = AGENT_OPENAI_MODEL_ID
-    return {"provider": MODEL_PROVIDER, "model_id": model_id}
+    provider_label = MODEL_PROVIDER_DISPLAY or _PROVIDER_LABELS.get(MODEL_PROVIDER, MODEL_PROVIDER)
+    return {"provider": provider_label, "model_id": model_id, "embedding_model": IE_EMBEDDING_MODEL}
 
 @app.get("/health")
 async def health_check():
