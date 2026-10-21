@@ -36,8 +36,11 @@ export class CollectionCardComponent {
   collectionName = computed(() => this.collection().title);
 
   entityCount = computed(() => {
-    // Match both "entities" and "files" (backend may send either)
-    const match = this.collection().description?.match(/(\d+)\s+(?:entities|files)/);
+    const c = this.collection();
+    if (typeof c.num_files === 'number') return c.num_files;
+    if (typeof c.num_entities === 'number') return c.num_entities;
+    // Fallback: parse description ("N files" / "N entities")
+    const match = c.description?.match(/(\d+)\s+(?:entities|files)/);
     return match ? parseInt(match[1], 10) : 0;
   });
 

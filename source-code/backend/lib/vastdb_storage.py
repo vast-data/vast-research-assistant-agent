@@ -104,13 +104,11 @@ class VastDBStorage(BaseDb):
         # Try to get bucket and schema from environment, or derive from RAG_BASE_URL
         try:
             from services.agent import _get_session_bucket_and_schema
-            derived_bucket, derived_schema = _get_session_bucket_and_schema()
-            self.bucket_name = os.getenv("VASTDB_BUCKET", derived_bucket)
-            self.schema_name = os.getenv("VASTDB_SCHEMA", derived_schema)
+            self.bucket_name, self.schema_name = _get_session_bucket_and_schema()
         except Exception as e:
             logger.warning(f"Failed to derive bucket/schema from RAG_BASE_URL: {e}, using environment variables")
-            self.bucket_name = os.getenv("VASTDB_BUCKET")
-            self.schema_name = os.getenv("VASTDB_SCHEMA", "agno")
+            self.bucket_name = os.getenv("VASTDB_BUCKET") or None
+            self.schema_name = os.getenv("VASTDB_SCHEMA") or "agno"
         
         if not all([self.endpoint, self.access_key, self.secret_key, self.bucket_name]):
             raise ValueError(

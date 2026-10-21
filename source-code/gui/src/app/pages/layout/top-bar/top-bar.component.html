@@ -47,6 +47,13 @@
         <mat-icon>settings</mat-icon>
       </button>
       <mat-menu #settingsMenu="matMenu" class="settings-menu">
+        <button mat-menu-item (click)="openSettings()">
+          <mat-icon>tune</mat-icon>
+          <span>App Settings</span>
+          @if (featureSettings.featureMode() !== 'none') {
+            <span class="custom-badge">{{ featureModeLabels[featureSettings.featureMode()] }}</span>
+          }
+        </button>
         <button mat-menu-item (click)="openSystemPrompt()">
           <mat-icon [class.active-prompt]="promptService.hasCustomPrompt()">psychology</mat-icon>
           <span>System Prompt</span>

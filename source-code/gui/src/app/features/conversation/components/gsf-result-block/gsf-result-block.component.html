@@ -1,0 +1,88 @@
+<div class="gsf-block" [ngClass]="'gsf-block--' + block.status">
+  <!-- Header -->
+  <div class="gsf-block__header">
+    <div class="gsf-block__header-left">
+      <mat-icon class="gsf-block__icon">
+        {{ block.status === 'loading' ? 'hourglass_empty' : block.status === 'error' ? 'error' : 'table_chart' }}
+      </mat-icon>
+      <span class="gsf-block__title">NVIDIA Auto-Ontology</span>
+      @if (block.question) {
+        <span class="gsf-block__question">{{ block.question }}</span>
+      }
+    </div>
+    <div class="gsf-block__header-right">
+      @if (block.status === 'loading') {
+        <span class="gsf-block__badge gsf-block__badge--loading">Running...</span>
+      } @else if (block.status === 'error') {
+        <span class="gsf-block__badge gsf-block__badge--error">Error</span>
+      } @else {
+        <span class="gsf-block__badge gsf-block__badge--success">{{ rowCount }} rows</span>
+      }
+    </div>
+  </div>
+
+  <!-- Pipeline Steps -->
+  @if (block.steps && block.steps.length > 0) {
+    <div class="gsf-block__steps">
+      @for (step of block.steps; track $index) {
+        <div class="gsf-block__step" [class.gsf-block__step--active]="isActiveStep($index)">
+          <mat-icon class="gsf-block__step-icon">
+            {{ isActiveStep($index) ? 'autorenew' : 'check_circle' }}
+          </mat-icon>
+          <span class="gsf-block__step-label">{{ step.label }}</span>
+          @if (step.thought) {
+            <span class="gsf-block__step-thought" [title]="step.thought">{{ step.thought }}</span>
+          }
+        </div>
+      }
+    </div>
+  }
+
+  <!-- SQL Code Section -->
+  @if (block.sqlCode) {
+    <div class="gsf-block__sql-section">
+      <button class="gsf-block__sql-toggle" (click)="toggleSql()">
+        <mat-icon>{{ sqlExpanded() ? 'expand_less' : 'expand_more' }}</mat-icon>
+        <mat-icon class="gsf-block__sql-icon">code</mat-icon>
+        <span>Generated SQL from NVIDIA Auto-Ontology</span>
+      </button>
+      @if (sqlExpanded()) {
+        <pre class="gsf-block__sql-code"><code>{{ block.sqlCode }}</code></pre>
+      }
+    </div>
+  }
+
+  <!-- Error -->
+  @if (block.error) {
+    <div class="gsf-block__error">
+      <mat-icon>warning</mat-icon>
+      <span>{{ block.error }}</span>
+    </div>
+  }
+
+  <!-- Results Table -->
+  @if (block.results && block.results.length > 0) {
+    <div class="gsf-block__table-section">
+      <div class="gsf-block__table-wrapper">
+        <table class="gsf-block__table">
+          <thead>
+            <tr>
+              @for (col of displayColumns; track col) {
+                <th>{{ col }}</th>
+              }
+            </tr>
+          </thead>
+          <tbody>
+            @for (row of displayRows; track $index) {
+              <tr>
+                @for (col of displayColumns; track col) {
+                  <td>{{ getCellValue(row, col) }}</td>
+                }
+              </tr>
+            }
+          </tbody>
+        </table>
+      </div>
+    </div>
+  }
+</div>

@@ -11,6 +11,7 @@ from models import PromptRequest, PromptResponse
 from services.auth import decode_jwt
 from services.agent import get_or_create_agent
 from api.utils.session_utils import generate_summary_from_prompt
+from config import GENERATE_SESSION_TITLE_WITH_LLM
 
 logger = logging.getLogger(__name__)
 
@@ -77,10 +78,13 @@ class PromptService:
         
         # Create or get agent
         self.timing_metrics["agent_creation_start"] = time.time()
-        # Get collection name from request (use first collection if list provided)
-        collection_name = None
+        collection_names = None
         if request.collections:
-            collection_name = request.collections[0] if isinstance(request.collections, list) else request.collections
+            if isinstance(request.collections, list):
+                collection_names = [c for c in request.collections if c]
+            else:
+                collection_names = [request.collections]
+        collection_name = collection_names[0] if collection_names else None
         
         agent = get_or_create_agent(
             user_id=self.user_id,
@@ -88,6 +92,7 @@ class PromptService:
             session_id=target_session_id,
             allowed_tools=request.tools,
             collection_name=collection_name,
+            collection_names=collection_names,
             internet_search=request.internet_search,
             custom_instructions=request.system_prompt
         )
@@ -275,12 +280,18 @@ class PromptService:
                         session_title = "My Session"
                         logger.info(f"Using fallback title: {session_title}")
                     
-                    # Generate summary from first prompt if it's the first prompt and no summary exists
+                    # Generate summary from first prompt if enabled (default off for Foundry RPM)
                     session_summary_text = None
                     if is_first_prompt and not (reloaded_session.summary and reloaded_session.summary.get("summary")):
-                        logger.info(f"Generating summary from first prompt: {request.prompt[:50]}...")
-                        session_summary_text = generate_summary_from_prompt(agent, request.prompt)
-                        logger.info(f"Generated summary: {session_summary_text[:100]}...")
+                        if GENERATE_SESSION_TITLE_WITH_LLM:
+                            logger.info(f"Generating summary from first prompt: {request.prompt[:50]}...")
+                            session_summary_text = generate_summary_from_prompt(agent, request.prompt)
+                            logger.info(f"Generated summary: {session_summary_text[:100]}...")
+                        else:
+                            session_summary_text = (
+                                request.prompt[:197] + "..." if len(request.prompt) > 200 else request.prompt
+                            )
+                            logger.info("Using truncated prompt as summary (GENERATE_SESSION_TITLE_WITH_LLM=false)")
                     
                     # Update summary dict if needed
                     if not reloaded_session.summary:

@@ -1,0 +1,64 @@
+<div class="aidr-block" [class.expanded]="expanded()" [ngClass]="'aidr-block--' + statusClass">
+  <div
+    class="aidr-block__header"
+    (click)="toggle()"
+    (keydown.enter)="toggle()"
+    (keydown.space)="toggle(); $event.preventDefault()"
+    role="button"
+    tabindex="0">
+    <div class="aidr-block__header-left">
+      <mat-icon class="aidr-block__chevron">
+        {{ expanded() ? 'expand_more' : 'chevron_right' }}
+      </mat-icon>
+
+      <mat-icon class="aidr-block__status-icon" [ngClass]="'aidr-block__status-icon--' + statusClass">
+        {{ statusIcon }}
+      </mat-icon>
+
+      <span class="aidr-block__name">{{ displayName }}</span>
+
+      @if (guard.context) {
+        <span class="aidr-block__context">{{ guard.context }}</span>
+      }
+    </div>
+
+    <div class="aidr-block__header-right">
+      @if (guard.blocked) {
+        <span class="aidr-block__badge aidr-block__badge--blocked">Blocked</span>
+      } @else if (guard.anyDetected) {
+        <span class="aidr-block__badge aidr-block__badge--detected">Detected</span>
+      } @else {
+        <span class="aidr-block__badge aidr-block__badge--clear">Clear</span>
+      }
+    </div>
+  </div>
+
+  @if (expanded()) {
+    <div class="aidr-block__content">
+      @if (guard.blockReason) {
+        <div class="aidr-block__reason">
+          <mat-icon>block</mat-icon>
+          <span>{{ guard.blockReason }}</span>
+        </div>
+      }
+
+      <div class="aidr-block__detectors">
+        @for (detector of detectorEntries; track detector.name) {
+          <div class="aidr-block__detector" [class.aidr-block__detector--detected]="detector.detected">
+            <mat-icon class="aidr-block__detector-icon">
+              {{ detector.detected ? 'warning' : 'check_circle' }}
+            </mat-icon>
+            <span class="aidr-block__detector-name">{{ detector.name }}</span>
+            @if (detector.detected && detector.data?.analyzer_responses) {
+              <span class="aidr-block__detector-detail">
+                @for (resp of detector.data.analyzer_responses; track resp.analyzer) {
+                  {{ resp.analyzer }} ({{ resp.confidence | number:'1.0-2' }})
+                }
+              </span>
+            }
+          </div>
+        }
+      </div>
+    </div>
+  }
+</div>

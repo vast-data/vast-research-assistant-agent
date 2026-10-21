@@ -16,13 +16,17 @@ import { MatSnackBar, MatSnackBarModule } from '@angular/material/snack-bar';
 import { StringToFlowPipe } from '../../../shared/pipes/string-to-flow.pipe';
 import { MarkdownViewerComponent } from '../../../shared/components/markdown-viewer/markdown-viewer.component';
 import { ToolBlockComponent } from '../tool-block/tool-block.component';
+import { GsfResultBlockComponent } from '../gsf-result-block/gsf-result-block.component';
+import { AidrGuardBlockComponent } from '../aidr-guard-block/aidr-guard-block.component';
 import { PdfExportService } from '../../../shared/services/pdf-export.service';
 import {
     ChatMessage,
     MessageContentBlock,
     TextContentBlock,
     ToolContentBlock,
-    LoadingContentBlock
+    LoadingContentBlock,
+    GsfResultBlock,
+    AidrGuardContentBlock
 } from '../../../reports/services/session.mapper';
 
 @Component({
@@ -33,6 +37,8 @@ import {
         StringToFlowPipe,
         MarkdownViewerComponent,
         ToolBlockComponent,
+        GsfResultBlockComponent,
+        AidrGuardBlockComponent,
         MatIconModule,
         MatButtonModule,
         MatMenuModule,
@@ -80,6 +86,14 @@ export class MessageAiComponent implements AfterViewInit {
         return block.type === 'tool';
     }
 
+    isGsfBlock(block: MessageContentBlock): block is GsfResultBlock {
+        return block.type === 'gsf_result';
+    }
+
+    isAidrGuardBlock(block: MessageContentBlock): block is AidrGuardContentBlock {
+        return block.type === 'aidr_guard';
+    }
+
     isLoadingBlock(block: MessageContentBlock): block is LoadingContentBlock {
         return block.type === 'loading';
     }
@@ -90,6 +104,14 @@ export class MessageAiComponent implements AfterViewInit {
 
     getToolBlock(block: MessageContentBlock): ToolContentBlock {
         return block as ToolContentBlock;
+    }
+
+    getGsfBlock(block: MessageContentBlock): GsfResultBlock {
+        return block as GsfResultBlock;
+    }
+
+    getAidrGuardBlock(block: MessageContentBlock): AidrGuardContentBlock {
+        return block as AidrGuardContentBlock;
     }
 
     getLoadingMessage(block: MessageContentBlock): string {

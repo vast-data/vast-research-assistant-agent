@@ -37,6 +37,8 @@ Environment variables control agent behavior:
 | `VASTDB_ENDPOINT` | VastDB endpoint URL |
 | `VASTDB_ACCESS_KEY` | VastDB access key |
 | `VASTDB_SECRET_KEY` | VastDB secret key |
+| `VASTDB_BUCKET` | Optional bucket override (else `<ns>-bucket` from `RAG_BASE_URL`) |
+| `VASTDB_SCHEMA` | Optional schema override (else `<ns>-schema` from `RAG_BASE_URL`) |
 
 ## About the Application
 

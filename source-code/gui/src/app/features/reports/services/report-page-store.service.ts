@@ -11,7 +11,9 @@ import {
     MessageContentBlock,
     TextContentBlock,
     ToolContentBlock,
-    LoadingContentBlock
+    LoadingContentBlock,
+    GsfResultBlock,
+    AidrGuardContentBlock
 } from './session.mapper';
 import { StreamEvent } from '../utils/stream-event.utils';
 import { Collection } from '../../shared/models/collections.model';
@@ -168,7 +170,16 @@ export class ReportPageStoreService {
         }
     }
 
-    sendMessage(prompt: { message: string, deepThinking: boolean, internetSearch: boolean, collection: Collection | null, systemPrompt?: string | null }, hideForUser = false): void {
+    sendMessage(prompt: {
+        message: string,
+        deepThinking: boolean,
+        internetSearch: boolean,
+        gsfEnabled?: boolean,
+        aidrEnabled?: boolean,
+        collections?: Collection[],
+        collection?: Collection | null,
+        systemPrompt?: string | null,
+    }, hideForUser = false): void {
         this.addChatMessage({
             content: prompt.message,
             role: 'human',
@@ -177,21 +188,44 @@ export class ReportPageStoreService {
         });
         
         this.updateState({ isNew: false, promptStatus: 'responding' });
-        this.processPromptStream(prompt.message, prompt.deepThinking, prompt.internetSearch, prompt.collection, prompt.systemPrompt);
+        const collections = prompt.collections?.length
+            ? prompt.collections
+            : (prompt.collection ? [prompt.collection] : []);
+        this.processPromptStream(
+            prompt.message,
+            prompt.deepThinking,
+            prompt.internetSearch,
+            !!prompt.gsfEnabled,
+            !!prompt.aidrEnabled,
+            collections,
+            prompt.systemPrompt,
+        );
     }
 
-    private processPromptStream(prompt: string, deepThinking: boolean, internetSearch: boolean, collection: Collection | null, systemPrompt?: string | null): void {
+    private processPromptStream(
+        prompt: string,
+        deepThinking: boolean,
+        internetSearch: boolean,
+        gsfEnabled: boolean,
+        aidrEnabled: boolean,
+        collections: Collection[],
+        systemPrompt?: string | null,
+    ): void {
         this.updateState({ promptStatus: 'loading' });
         this.responding.set(true);
 
         const selectedChat = this.state().selectedChat;
+        const collectionIds = collections.map(c => c.id).filter(Boolean);
         const requestBody: Record<string, unknown> = {
             prompt,
             ...(selectedChat ? { conversation_id: selectedChat } : {}),
-            ...(collection ? { collections: [collection.id] } : {}),
-            ...(deepThinking ? { tools: ['think'] } : {}),
+            ...(collectionIds.length ? { collections: collectionIds } : {}),
+            // Do NOT send tools:['think'] — that strips retrieve_chunks / query_database.
             internet_search: !!internetSearch,
-            ...(systemPrompt ? { system_prompt: systemPrompt } : {})
+            gsf_enabled: !!gsfEnabled,
+            aidr_enabled: !!aidrEnabled,
+            // Always send system_prompt when GSF or deep research so backend uses the right instructions
+            ...(systemPrompt ? { system_prompt: systemPrompt } : {}),
         };
 
         this.aiResponseStreamHttpService.streamResponse({
@@ -216,6 +250,12 @@ export class ReportPageStoreService {
             case 'tool_end':
                 this.handleToolCompleteEvent(event);
                 break;
+            case 'gsf_step':
+                this.handleGsfStepEvent(event);
+                break;
+            case 'aidr_guard':
+                this.handleAidrGuardEvent(event);
+                break;
             case 'bedrock_error':
                 console.error('Bedrock API error:', event.error);
                 break;
@@ -224,6 +264,9 @@ export class ReportPageStoreService {
                 break;
             case 'complete':
                 this.handleCompleteEvent(event);
+                break;
+            case 'error':
+                this.handleErrorEvent(event);
                 break;
         }
     }
@@ -235,23 +278,65 @@ export class ReportPageStoreService {
         }
     }
 
+    private handleGsfStepEvent(event: StreamEvent): void {
+        const lastMessage = this.getLastMessage();
+        if (!lastMessage || !Array.isArray(lastMessage.content)) return;
+
+        const updatedContent = [...lastMessage.content] as MessageContentBlock[];
+
+        for (let i = updatedContent.length - 1; i >= 0; i--) {
+            const block = updatedContent[i];
+            if (block.type === 'gsf_result' && block.status === 'loading') {
+                const steps = [...(block.steps ?? [])];
+                const step = {
+                    node: event.node ?? '',
+                    label: event.label ?? '',
+                    thought: event.thought ?? undefined
+                };
+                const last = steps[steps.length - 1];
+                if (!last || last.node !== step.node || last.label !== step.label) {
+                    steps.push(step);
+                } else {
+                    steps[steps.length - 1] = step;
+                }
+                updatedContent[i] = { ...block, steps };
+                this.updateLastChatMessage({ content: updatedContent });
+                return;
+            }
+        }
+    }
+
     private handleToolStartEvent(event: StreamEvent): void {
         const lastMessage = this.getLastMessage();
-        const toolBlock: ToolContentBlock = {
-            type: 'tool',
-            toolName: event.tool_name ?? 'Processing',
-            status: 'loading',
-            startTimestamp: event.timestamp,
-            arguments: event.arguments
-        };
+        const toolName = event.tool_name ?? 'Processing';
+
+        let newBlock: MessageContentBlock;
+        if (toolName === 'query_database') {
+            const gsfBlock: GsfResultBlock = {
+                type: 'gsf_result',
+                toolName,
+                status: 'loading',
+                question: (event.arguments?.['question'] as string) ?? undefined,
+            };
+            newBlock = gsfBlock;
+        } else {
+            const toolBlock: ToolContentBlock = {
+                type: 'tool',
+                toolName,
+                status: 'loading',
+                startTimestamp: event.timestamp,
+                arguments: event.arguments
+            };
+            newBlock = toolBlock;
+        }
 
         if (lastMessage?.type === 'streamResponse' && Array.isArray(lastMessage.content)) {
             const filteredContent = this.removeLoadingBlocks(lastMessage.content);
-            const updatedContent: MessageContentBlock[] = [...filteredContent, toolBlock];
+            const updatedContent: MessageContentBlock[] = [...filteredContent, newBlock];
             this.updateLastChatMessage({ content: updatedContent });
         } else {
             this.addChatMessage({
-                content: [toolBlock],
+                content: [newBlock],
                 role: 'ai',
                 type: 'streamResponse',
                 sources: [],
@@ -265,6 +350,29 @@ export class ReportPageStoreService {
         if (!lastMessage || !Array.isArray(lastMessage.content)) return;
 
         const updatedContent = [...lastMessage.content] as MessageContentBlock[];
+
+        if (event.tool_name === 'query_database') {
+            for (let i = updatedContent.length - 1; i >= 0; i--) {
+                const block = updatedContent[i];
+                if (block.type === 'gsf_result' && block.status === 'loading') {
+                    updatedContent[i] = {
+                        ...block,
+                        status: event.gsf_error ? 'error' : 'success',
+                        sqlCode: event.sql_code ?? undefined,
+                        columns: event.columns ?? undefined,
+                        results: event.gsf_results ?? undefined,
+                        error: event.gsf_error ?? undefined,
+                        duration: event.duration,
+                        steps: event.gsf_steps ?? block.steps,
+                    };
+                    break;
+                }
+            }
+            const loadingBlock: LoadingContentBlock = { type: 'loading', message: 'Analyzing results...' };
+            updatedContent.push(loadingBlock);
+            this.updateLastChatMessage({ content: updatedContent });
+            return;
+        }
         
         // Find the last tool block with loading status
         for (let i = updatedContent.length - 1; i >= 0; i--) {
@@ -312,6 +420,35 @@ export class ReportPageStoreService {
         updatedContent.push(loadingBlock);
 
         this.updateLastChatMessage({ content: updatedContent });
+    }
+
+    private handleAidrGuardEvent(event: StreamEvent): void {
+        const aidrBlock: AidrGuardContentBlock = {
+            type: 'aidr_guard',
+            checkType: event.check_type ?? 'input',
+            blocked: event.blocked ?? false,
+            anyDetected: event.any_detected ?? false,
+            detectors: event.detectors ?? {},
+            durationMs: event.duration_ms ?? 0,
+            blockReason: event.block_reason,
+            context: event.context,
+        };
+
+        const lastMessage = this.getLastMessage();
+
+        if (lastMessage?.type === 'streamResponse' && Array.isArray(lastMessage.content)) {
+            const filteredContent = this.removeLoadingBlocks(lastMessage.content);
+            const updatedContent: MessageContentBlock[] = [...filteredContent, aidrBlock];
+            this.updateLastChatMessage({ content: updatedContent });
+        } else {
+            this.addChatMessage({
+                content: [aidrBlock],
+                role: 'ai',
+                type: 'streamResponse',
+                sources: [],
+                animate: true
+            });
+        }
     }
 
     private handleContentDelta(event: StreamEvent): void {
@@ -376,6 +513,22 @@ export class ReportPageStoreService {
         }
 
         this.updateState({ promptStatus: 'success' });
+    }
+
+    private handleErrorEvent(event: StreamEvent): void {
+        const errorMessage = (event as any).error || 'An error occurred';
+        const lastMessage = this.getLastMessage();
+        if (lastMessage && lastMessage.role === 'ai') {
+            const currentContent = lastMessage.content;
+            if (Array.isArray(currentContent)) {
+                currentContent.push({ type: 'text', text: `\n\n⚠️ **${errorMessage}**` });
+            } else {
+                lastMessage.content = (currentContent || '') + `\n\n⚠️ **${errorMessage}**`;
+            }
+            this.updateState({ chatHistory: [...this.state().chatHistory] });
+        }
+        this.updateState({ promptStatus: 'error' });
+        this.responding.set(false);
     }
 
     private handleStreamError(): void {

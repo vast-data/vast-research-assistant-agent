@@ -45,15 +45,27 @@ export class CollectionSelectorComponent {
   private collectionsService = inject(CollectionsService);
   private dialog = inject(MatDialog);
 
-  collectionSelected = output<Collection>();
+  /** Emitted whenever the multi-selection set changes. */
+  collectionsSelected = output<Collection[]>();
 
   searchControl = new FormControl('');
-  private selectedCollectionSignal = signal<Collection | null>(null);
+  private selectedCollectionsSignal = signal<Collection[]>([]);
 
   collections = this.collectionsService.collections;
   isLoading = this.collectionsService.isLoading;
 
-  selectedCollection = computed(() => this.selectedCollectionSignal());
+  selectedCollections = computed(() => this.selectedCollectionsSignal());
+  selectedCollection = computed(() => {
+    const cols = this.selectedCollectionsSignal();
+    return cols.length ? cols[cols.length - 1] : null;
+  });
+
+  selectionLabel = computed(() => {
+    const cols = this.selectedCollectionsSignal();
+    if (!cols.length) return null;
+    if (cols.length === 1) return cols[0].title;
+    return `${cols.length} collections`;
+  });
 
   formChangesSignal = toSignal(this.searchControl.valueChanges);
 
@@ -71,9 +83,18 @@ export class CollectionSelectorComponent {
     );
   });
 
-  onSelectCollection(collection: Collection): void {
-    this.selectedCollectionSignal.set(collection);
-    this.collectionSelected.emit(collection);
+  isSelected(collection: Collection): boolean {
+    return this.selectedCollectionsSignal().some(c => c.id === collection.id);
+  }
+
+  onToggleCollection(collection: Collection): void {
+    const current = this.selectedCollectionsSignal();
+    const exists = current.some(c => c.id === collection.id);
+    const next = exists
+      ? current.filter(c => c.id !== collection.id)
+      : [...current, collection];
+    this.selectedCollectionsSignal.set(next);
+    this.collectionsSelected.emit(next);
     this.searchControl.setValue('');
   }
 
