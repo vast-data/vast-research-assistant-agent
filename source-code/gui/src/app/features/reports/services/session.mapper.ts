@@ -15,9 +15,26 @@ export interface ToolEndedEvent {
     chunks?: ApiRetrievedChunk[];
     collection_metadata?: ApiCollectionMetadata;
     metadata_query_used?: string;
+    sql_code?: string;
+    columns?: string[];
+    gsf_results?: Record<string, unknown>[];
+    gsf_error?: string;
+    gsf_steps?: { node: string; label: string; thought?: string }[];
 }
 
-export type ApiToolEvent = ToolStartEvent | ToolEndedEvent;
+export interface AidrGuardEvent {
+    type: 'aidr_guard';
+    check_type: 'input' | 'tool_output' | 'output';
+    blocked: boolean;
+    any_detected: boolean;
+    detectors: Record<string, { detected: boolean; data?: any }>;
+    duration_ms: number;
+    block_reason?: string | null;
+    context?: string;
+    timestamp: number;
+}
+
+export type ApiToolEvent = ToolStartEvent | ToolEndedEvent | AidrGuardEvent;
 
 export interface ApiRetrievedChunk {
     text: string;
@@ -54,7 +71,7 @@ export interface SessionResponse {
 }
 
 // Content block types for AI message content array
-export type MessageContentBlock = TextContentBlock | ToolContentBlock | LoadingContentBlock;
+export type MessageContentBlock = TextContentBlock | ToolContentBlock | LoadingContentBlock | GsfResultBlock | AidrGuardContentBlock;
 
 export interface TextContentBlock {
     type: 'text';
@@ -64,6 +81,30 @@ export interface TextContentBlock {
 export interface LoadingContentBlock {
     type: 'loading';
     message?: string;
+}
+
+export interface GsfResultBlock {
+    type: 'gsf_result';
+    toolName: string;
+    status: 'loading' | 'success' | 'error';
+    question?: string;
+    sqlCode?: string;
+    columns?: string[];
+    results?: Record<string, unknown>[];
+    error?: string;
+    duration?: number;
+    steps?: { node: string; label: string; thought?: string }[];
+}
+
+export interface AidrGuardContentBlock {
+    type: 'aidr_guard';
+    checkType: 'input' | 'tool_output' | 'output';
+    blocked: boolean;
+    anyDetected: boolean;
+    detectors: Record<string, { detected: boolean; data?: any }>;
+    durationMs: number;
+    blockReason?: string | null;
+    context?: string;
 }
 
 export interface RetrievedChunk {
@@ -197,28 +238,56 @@ function mapToolEventsToContentBlocks(toolEvents: ApiToolEvent[]): MessageConten
             pendingTools.set(event.tool_name, event);
         } else if (event.type === 'tool_ended') {
             const startEvent = pendingTools.get(event.tool_name);
-            
-            const toolBlock: MessageContentBlock = {
-                type: 'tool',
-                toolName: event.tool_name,
-                status: event.success ? 'success' : 'error',
-                startTimestamp: startEvent?.timestamp,
-                duration: event.duration,
-                arguments: startEvent?.arguments,
-                citations: event.citations,
-                chunks: event.chunks?.map(chunk => ({
-                    text: chunk.text,
-                    score: chunk.score,
-                    source: chunk.source,
-                    sourceTitle: chunk.source_title,
-                    sourceUrl: chunk.source_url
-                })),
-                collectionMetadata: event.collection_metadata || undefined,
-                metadataQueryUsed: event.metadata_query_used || undefined
-            };
 
-            contentBlocks.push(toolBlock);
+            if (event.tool_name === 'query_database') {
+                const gsfBlock: GsfResultBlock = {
+                    type: 'gsf_result',
+                    toolName: event.tool_name,
+                    status: event.gsf_error ? 'error' : (event.success ? 'success' : 'error'),
+                    question: startEvent?.arguments?.['question'] as string | undefined,
+                    sqlCode: event.sql_code,
+                    columns: event.columns,
+                    results: event.gsf_results,
+                    error: event.gsf_error,
+                    duration: event.duration,
+                    steps: event.gsf_steps,
+                };
+                contentBlocks.push(gsfBlock);
+            } else {
+                const toolBlock: MessageContentBlock = {
+                    type: 'tool',
+                    toolName: event.tool_name,
+                    status: event.success ? 'success' : 'error',
+                    startTimestamp: startEvent?.timestamp,
+                    duration: event.duration,
+                    arguments: startEvent?.arguments,
+                    citations: event.citations,
+                    chunks: event.chunks?.map(chunk => ({
+                        text: chunk.text,
+                        score: chunk.score,
+                        source: chunk.source,
+                        sourceTitle: chunk.source_title,
+                        sourceUrl: chunk.source_url
+                    })),
+                    collectionMetadata: event.collection_metadata || undefined,
+                    metadataQueryUsed: event.metadata_query_used || undefined
+                };
+                contentBlocks.push(toolBlock);
+            }
+
             pendingTools.delete(event.tool_name);
+        } else if (event.type === 'aidr_guard') {
+            const aidrBlock: AidrGuardContentBlock = {
+                type: 'aidr_guard',
+                checkType: event.check_type,
+                blocked: event.blocked,
+                anyDetected: event.any_detected,
+                detectors: event.detectors,
+                durationMs: event.duration_ms,
+                blockReason: event.block_reason,
+                context: event.context,
+            };
+            contentBlocks.push(aidrBlock);
         }
     }
 

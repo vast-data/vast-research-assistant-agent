@@ -14,36 +14,27 @@
     </div>
     <div class="chat__actions">
         <div class="chat__settings-actions">
-            <app-collection-selector (collectionSelected)="onCollectionSelected($event)"></app-collection-selector>
-            <button 
-                type="button" 
-                class="chat__toggle"
-                [class.chat__toggle--active]="isInternetSearchEnabled()"
-                (click)="toggleInternetSearch()"
-                [attr.aria-pressed]="isInternetSearchEnabled()"
-                aria-label="Toggle internet search"
-                matTooltip="When enabled, the model will search the internet for additional information">
-                <mat-icon>language</mat-icon>
-                <span class="chat__toggle-text">Internet Search</span>
-            </button>
-            <button 
-                type="button" 
-                class="chat__toggle"
-                [class.chat__toggle--active]="promptService.deepResearchEnabled()"
-                (click)="toggleDeepResearch()"
-                [attr.aria-pressed]="promptService.deepResearchEnabled()"
-                aria-label="Toggle deep research"
-                matTooltip="When enabled, the model uses multi-step reasoning with multiple searches for thorough answers">
-                <mat-icon>biotech</mat-icon>
-                <span class="chat__toggle-text">Deep Research</span>
-            </button>
+            <app-collection-selector (collectionsSelected)="onCollectionsSelected($event)"></app-collection-selector>
+            @for (mode of modes; track mode.id) {
+                <button
+                    type="button"
+                    class="chat__toggle"
+                    [class.chat__toggle--active]="featureSettings.featureMode() === mode.id"
+                    (click)="setMode(mode.id)"
+                    [attr.aria-pressed]="featureSettings.featureMode() === mode.id"
+                    [attr.aria-label]="'Toggle ' + mode.label"
+                    [matTooltip]="mode.tooltip">
+                    <mat-icon>{{ mode.icon }}</mat-icon>
+                    <span class="chat__toggle-text">{{ mode.label }}</span>
+                </button>
+            }
         </div>
        
         <div class="chat__main-actions">
             <button
                 class="chat__send button-icon-s"
-                [disabled]="!selectedCollection()"
-                [matTooltip]="!selectedCollection() ? 'Select a collection first' : ''"
+                [disabled]="!selectedCollections().length"
+                [matTooltip]="!selectedCollections().length ? 'Select at least one collection' : ''"
             >
                 <mat-icon svgIcon="send"></mat-icon>
             </button>

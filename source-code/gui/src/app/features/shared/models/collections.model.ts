@@ -5,7 +5,9 @@ export interface Collection {
   description: string; // formatted description
   title: string; // extracted collection name from id
   private: boolean; // true if collection id has a prefix before '__'
-  num_entities: number; // number of documents in the collection
+  num_entities: number; // number of documents/files in the collection
+  num_files?: number; // explicit file count (same as num_entities when present)
+  num_chunks?: number;
 }
 
 export interface FullCollection {

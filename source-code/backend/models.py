@@ -22,7 +22,9 @@ class LoginResponse(BaseModel):
 class CollectionItem(BaseModel):
     id: str
     description: str
-    num_entities: int = 0
+    num_entities: int = 0  # number of source files (documents) in the collection
+    num_files: int = 0  # same as num_entities; explicit for API consumers
+    num_chunks: int = 0
 
 
 class CollectionsResponse(BaseModel):
@@ -36,6 +38,8 @@ class PromptRequest(BaseModel):
     session_name: Optional[str] = None  # Optional session name, defaults to "My Session" for new sessions
     tools: Optional[List[str]] = None  # Optional list of tool names to use (e.g., ["retrieve_chunks", "duckduckgo_search"])
     internet_search: Optional[bool] = None  # If False, do not use DuckDuckGo. If missing or True, use DuckDuckGo.
+    gsf_enabled: Optional[bool] = None  # If True and GSF_BASE_URL set, register query_database tool
+    aidr_enabled: Optional[bool] = None  # If True (and CS_AIDR_ENABLED), run CrowdStrike AIDR guards
     system_prompt: Optional[str] = None  # Optional custom system prompt to override the default AGENT_INSTRUCTIONS
     # Agent/No agent - ignoring for now
     # Agent response preference - ignoring for now

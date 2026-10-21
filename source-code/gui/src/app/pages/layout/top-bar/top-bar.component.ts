@@ -1,4 +1,4 @@
-import { ChangeDetectionStrategy, Component, computed, inject, signal, OnInit } from '@angular/core';
+import { ChangeDetectionStrategy, Component, computed, inject, OnInit } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { RouterLink } from '@angular/router';
 import { HttpClient } from '@angular/common/http';
@@ -10,6 +10,8 @@ import { UserLogoComponent } from '../../../features/shared/components/user-logo
 import { AppStoreService } from '../../../features/shared/services/app-store.service';
 import { SystemPromptService } from '../../../features/shared/services/system-prompt.service';
 import { SystemPromptDialogComponent } from '../../../features/shared/components/system-prompt-dialog/system-prompt-dialog.component';
+import { AppSettingsDialogComponent } from '../../../features/shared/components/app-settings-dialog/app-settings-dialog.component';
+import { FEATURE_MODE_LABELS, FeatureSettingsService, ModelInfo } from '../../../features/shared/services/feature-settings.service';
 import { SETTINGS } from '../../../features/shared/settings';
 
 @Component({
@@ -33,16 +35,21 @@ export class TopBarComponent implements OnInit {
   private dialog = inject(MatDialog);
   private http = inject(HttpClient);
   promptService = inject(SystemPromptService);
+  featureSettings = inject(FeatureSettingsService);
+  readonly featureModeLabels = FEATURE_MODE_LABELS;
 
   sidebarOpen = computed(() => this.appStoreService.sidebarOpen());
-  modelInfo = signal<{ provider: string; model_id: string } | null>(null);
+  modelInfo = computed(() =>
+    this.featureSettings.modelId()
+      ? { provider: this.featureSettings.provider(), model_id: this.featureSettings.modelId() }
+      : null
+  );
 
   ngOnInit(): void {
-    this.http.get<{ provider: string; model_id: string }>(`${SETTINGS.BASE_API_URL}/model-info`)
-      .subscribe({
-        next: (info) => this.modelInfo.set(info),
-        error: () => {}
-      });
+    this.http.get<ModelInfo>(`${SETTINGS.BASE_API_URL}/model-info`).subscribe({
+      next: (info) => this.featureSettings.setModelInfo(info),
+      error: () => {}
+    });
   }
 
   toggleSidebar(): void {
@@ -57,9 +64,15 @@ export class TopBarComponent implements OnInit {
     this.appStoreService.closeSidebar();
   }
 
-  toggleDeepResearch(): void {
+  openSettings(): void {
     this.promptService.loadSystemPrompt();
-    this.promptService.toggleDeepResearch();
+    this.dialog.open(AppSettingsDialogComponent, {
+      width: '480px',
+      maxWidth: '90vw',
+      panelClass: 'system-prompt-dialog-panel',
+      backdropClass: 'system-prompt-dialog-backdrop',
+      autoFocus: false,
+    });
   }
 
   openSystemPrompt(): void {

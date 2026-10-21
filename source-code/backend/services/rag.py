@@ -127,7 +127,8 @@ def upload_document(
     token: str,
     base_url: Optional[str] = None,
     allowed_groups: Optional[List[str]] = None,
-    is_public: bool = False
+    is_public: bool = False,
+    tags: Optional[Dict[str, str]] = None,
 ) -> Dict[str, Any]:
     """
     Upload a document to a collection in the RAG backend.
@@ -140,6 +141,8 @@ def upload_document(
         base_url: Base URL of the RAG API
         allowed_groups: List of allowed groups (default: ["public-read"])
         is_public: Whether the document is public (default: False)
+        tags: Optional key/value metadata (e.g. subject_id, note_type).
+              Flattened into top-level document_params (not nested under "tags").
     
     Returns:
         Dictionary containing the upload result
@@ -163,12 +166,20 @@ def upload_document(
             'documents': (filename, file_content)
         }
         
-        # Prepare metadata as JSON string
-        data = {
+        # Flat document_params — metadata keys sit beside collection_name, not under "tags"
+        reserved = {"collection_name", "allowed_groups", "is_public", "content_length", "tags"}
+        data: Dict[str, Any] = {
             "collection_name": collection_name,
             "allowed_groups": allowed_groups,
-            "is_public": is_public
+            "is_public": is_public,
         }
+        if tags:
+            for key, value in tags.items():
+                k = str(key)
+                if k in reserved:
+                    logger.warning("Skipping reserved document_params key from tags: %s", k)
+                    continue
+                data[k] = str(value)
         
         # Create form data with file and JSON metadata
         form_data = {
@@ -197,6 +208,48 @@ def upload_document(
         raise HTTPException(
             status_code=500,
             detail=f"Error uploading document: {str(e)}"
+        )
+    finally:
+        client.close()
+
+
+def set_document_tags(
+    collection_name: str,
+    document_name: str,
+    tags: Dict[str, str],
+    token: str,
+    is_public: bool = False,
+    base_url: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Upsert tags on an already-ingested document (PATCH /api/v1/documents/tags)."""
+    base_url = (base_url or RAG_BASE_URL).rstrip('/')
+    client = httpx.Client(
+        base_url=base_url,
+        verify=RAG_SSL_VERIFY,
+        timeout=RAG_TIMEOUT,
+    )
+    try:
+        response = client.patch(
+            "/api/v1/documents/tags",
+            json={
+                "collection_name": collection_name,
+                "document_name": document_name,
+                "is_public": is_public,
+                "tags": {str(k): str(v) for k, v in tags.items()},
+            },
+            headers=get_headers(token),
+        )
+        response.raise_for_status()
+        return response.json()
+    except httpx.HTTPStatusError as e:
+        raise HTTPException(
+            status_code=e.response.status_code,
+            detail=f"Failed to set document tags: {e.response.text}",
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error setting document tags: {str(e)}",
         )
     finally:
         client.close()
@@ -256,7 +309,8 @@ def list_documents(
     token: str,
     is_public: bool = False,
     limit: int = 0,
-    base_url: Optional[str] = None
+    base_url: Optional[str] = None,
+    tag_filters: Optional[List[str]] = None,
 ) -> Dict[str, Any]:
     """
     List documents in a collection from the RAG backend.
@@ -267,6 +321,7 @@ def list_documents(
         is_public: Whether to list only public documents (default: False)
         limit: Maximum number of documents to return (0 means no limit, default: 0)
         base_url: Base URL of the RAG API
+        tag_filters: Optional list of 'key:op:value' tag filters
     
     Returns:
         Dictionary containing documents information
@@ -283,10 +338,12 @@ def list_documents(
     
     try:
         # Build query parameters
-        params = {
+        params: Dict[str, Any] = {
             "collection_name": collection_name,
             "is_public": str(is_public).lower()
         }
+        if tag_filters:
+            params["tag_filters"] = tag_filters
         
         response = client.get(
             "/api/v1/documents",
